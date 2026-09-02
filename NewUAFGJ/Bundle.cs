@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
+using System.Buffers.Binary;
+using System.Globalization;
 
 namespace UAFGJ
 {
@@ -699,22 +701,94 @@ namespace UAFGJ
 			string input_noext)
 		{
 			if (modifiedBaseField == null)
+			{
 				throw new InvalidOperationException(
 					"Modified base field is null.");
+			}
 
 			if (afie == null)
+			{
 				throw new InvalidOperationException(
 					"Asset info is null.");
+			}
+
+			if (assetInst == null)
+			{
+				throw new InvalidOperationException(
+					"Assets file instance is null.");
+			}
+
+			if (bundleInst == null)
+			{
+				throw new InvalidOperationException(
+					"Bundle instance is null.");
+			}
+
+			// ========================================================
+			// SERIALIZE MODIFIED BASEFIELD EXPLICITLY
+			// ========================================================
+
+			byte[] replacementData =
+				modifiedBaseField.WriteToByteArray();
+
+			if (replacementData == null ||
+				replacementData.Length == 0)
+			{
+				throw new InvalidDataException(
+					"Modified BaseField serialized to an empty payload.");
+			}
+
+			DebugStr(
+				$"[SAVE] Modified BaseField serialized explicitly: " +
+				$"{replacementData.Length} bytes " +
+				$"SHA256={Sha256Hex(replacementData)}");
+
+			DebugFindFloatPatterns(
+				"REPLACEMENT DATA",
+				replacementData);
+
+			DebugPayloadWindow(
+			"NEW textureRect",
+			replacementData,
+			10404);
+
+			DebugPayloadWindow(
+				"NEW old-offset",
+				replacementData,
+				3176);
+
+			// ========================================================
+			// WRITE RAW SERIALIZED ASSET DATA
+			// ========================================================
+
+			DebugStr(
+				$"[SAVE] About to SetNewData: " +
+				$"PID={afie.PathId}, " +
+				$"expectedBytes={replacementData.Length}, " +
+				$"expectedSHA256={Sha256Hex(replacementData)}");
 
 			afie.SetNewData(
-				modifiedBaseField);
+				replacementData);
+
+			if (afie.Replacer == null)
+			{
+				throw new InvalidDataException(
+					$"SetNewData did not create a replacer " +
+					$"for PID={afie.PathId}.");
+			}
+
+			DebugStr(
+				$"[SAVE] Replacer installed: " +
+				$"PID={afie.PathId}, " +
+				$"ReplacerType={afie.Replacer.GetType().Name}");
 
 			byte[] newAssetData;
 
 			using (var stream =
 				new MemoryStream())
 			using (var writer =
-				new AssetsFileWriter(stream))
+				new AssetsFileWriter(
+					stream))
 			{
 				assetInst.file.Write(
 					writer);
@@ -723,10 +797,30 @@ namespace UAFGJ
 					stream.ToArray();
 			}
 
+			DebugFindFloatPatterns(
+	"SERIALIZED ASSETS FILE",
+	newAssetData);
+
+			DebugStr(
+	$"[SAVE] Inner assets file serialized: " +
+	$"bytes={newAssetData.Length}, " +
+	$"SHA256={Sha256Hex(newAssetData)}");
+
+			DebugStr(
+				$"[SAVE] Expected target replacement: " +
+				$"PID={afie.PathId}, " +
+				$"TypeID={afie.TypeId}, " +
+				$"bytes={replacementData.Length}, " +
+				$"SHA256={Sha256Hex(replacementData)}");
+
 			DebugStr(
 				$"[SAVE] Inner assets file size=" +
 				$"{newAssetData.Length} " +
 				$"SHA256={Sha256Hex(newAssetData)}");
+
+			// ========================================================
+			// UPDATE BUNDLE DIRECTORY ENTRY
+			// ========================================================
 
 			int dirIndex =
 				bundleInst.file.GetFileIndex(
@@ -744,6 +838,13 @@ namespace UAFGJ
 				.SetNewData(
 					newAssetData);
 
+			// ========================================================
+			// WRITE TEMPORARY BUNDLE
+			// ========================================================
+
+			DeleteFileIfExists(
+				tempBundle);
+
 			using (var fileStream =
 				new FileStream(
 					tempBundle,
@@ -756,6 +857,24 @@ namespace UAFGJ
 			{
 				bundleInst.file.Write(
 					bunWriter);
+			}
+
+			DebugStr(
+	"[SAVE] Stage1 bundle write completed.");
+
+			try
+			{
+				DebugBundleEntryBytes(
+					bundleInst,
+					assetfile_name,
+					"STAGE1 IN-MEMORY DIRECTORY ENTRY",
+					newAssetData);
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[BUNDLE DEBUG] STAGE1 in-memory verification failed: " +
+					$"{ex.GetType().Name}: {ex.Message}");
 			}
 
 			DebugStr(
@@ -901,6 +1020,37 @@ namespace UAFGJ
 						"Could not reopen temporary bundle.");
 				}
 
+				DebugStr(
+	"[PACK DEBUG] Reopened stage1 bundle.");
+
+				try
+				{
+					byte[] stage1Entry =
+						ReadBundleDirectoryEntryBytes(
+							bun,
+							assetfileName);
+
+					DebugStr(
+						$"[PACK DEBUG] STAGE1 ENTRY RAW: " +
+						$"name='{assetfileName}', " +
+						$"bytes={stage1Entry.Length}, " +
+						$"SHA256={Sha256Hex(stage1Entry)}");
+
+					DebugFindFloatPatterns(
+	"STAGE1 ASSETS ENTRY",
+	stage1Entry);
+				}
+				catch (Exception ex)
+				{
+					DebugStr(
+						$"[PACK DEBUG] Could not read stage1 directory entry: " +
+						$"{ex.GetType().Name}: {ex.Message}");
+
+					DebugStr(
+						ex.ToString());
+				}
+
+
 				using (var stream =
 					new FileStream(
 						finalTemp,
@@ -1005,6 +1155,15 @@ namespace UAFGJ
 				DebugStr(
 					"[SAVE] Commit operation returned successfully.");
 
+				DebugStr(
+	"[SAVE] Reopening COMMITTED bundle for post-commit verification.");
+
+				VerifyCommittedTargetAfterReopen(
+					realName,
+					assetfileName,
+					targetPathId,
+					expectedTargetData);
+
 				string committedSha =
 					Sha256File(
 						realName);
@@ -1047,6 +1206,192 @@ namespace UAFGJ
 
 				DeleteFileIfExists(
 					finalTemp);
+			}
+		}
+
+		private static void VerifyCommittedTargetAfterReopen(
+	string bundlePath,
+	string assetfileName,
+	long targetPathId,
+	byte[] expectedTargetData)
+		{
+			AssetsManager verifyManager =
+				new AssetsManager();
+
+			try
+			{
+				RuntimeSetup.Configure(
+					verifyManager,
+					bundlePath);
+
+				BundleFileInstance bundle =
+					verifyManager.LoadBundleFile(
+						bundlePath,
+						true);
+
+				if (bundle == null)
+				{
+					throw new InvalidDataException(
+						"Post-commit verification could not reopen bundle.");
+				}
+
+				DebugStr(
+					$"[POST-COMMIT] Bundle reopened: '{bundlePath}'.");
+
+				int fileIndex =
+					bundle.file.GetFileIndex(
+						assetfileName);
+
+				if (fileIndex < 0)
+				{
+					throw new InvalidDataException(
+						$"Post-commit verification could not find assets file " +
+						$"'{assetfileName}'.");
+				}
+
+				AssetsFileInstance inst =
+					verifyManager.LoadAssetsFileFromBundle(
+						bundle,
+						fileIndex,
+						true);
+
+				if (inst == null)
+				{
+					throw new InvalidDataException(
+						$"Post-commit verification could not reopen assets file " +
+						$"'{assetfileName}'.");
+				}
+
+				AssetFileInfo targetInfo =
+					inst.file.AssetInfos.FirstOrDefault(
+						a =>
+							a.PathId ==
+							targetPathId);
+
+				if (targetInfo == null)
+				{
+					throw new InvalidDataException(
+						$"Post-commit verification could not find target PID " +
+						$"{targetPathId}.");
+				}
+
+				byte[] rawTargetData =
+					ReadRawAssetBytes(
+						inst,
+						targetInfo);
+
+				DebugStr(
+					$"[POST-COMMIT] RAW TARGET: " +
+					$"PID={targetInfo.PathId}, " +
+					$"TypeID={targetInfo.TypeId}, " +
+					$"ByteSize={targetInfo.ByteSize}, " +
+					$"bytes={rawTargetData.Length}, " +
+					$"SHA256={Sha256Hex(rawTargetData)}");
+
+				DebugStr(
+					$"[POST-COMMIT] EXPECTED TARGET: " +
+					$"bytes={expectedTargetData.Length}, " +
+					$"SHA256={Sha256Hex(expectedTargetData)}");
+
+				ComparePayloads(
+					"[POST-COMMIT] RAW TARGET",
+					rawTargetData,
+					expectedTargetData);
+
+				if (rawTargetData.Length !=
+					expectedTargetData.Length)
+				{
+					throw new InvalidDataException(
+						$"Post-commit target length mismatch: " +
+						$"actual={rawTargetData.Length}, " +
+						$"expected={expectedTargetData.Length}");
+				}
+
+				string actualSha =
+					Sha256Hex(
+						rawTargetData);
+
+				string expectedSha =
+					Sha256Hex(
+						expectedTargetData);
+
+				if (!string.Equals(
+					actualSha,
+					expectedSha,
+					StringComparison.OrdinalIgnoreCase))
+				{
+					throw new InvalidDataException(
+						"Post-commit raw target payload does not match " +
+						"the intended replacement data.");
+				}
+
+				DebugStr(
+					"[POST-COMMIT] VERIFIED: committed file contains " +
+					"the exact intended raw target payload.");
+
+				// ------------------------------------------------------------
+				// Optional semantic verification for Sprite only.
+				// Raw payload verification above applies to ALL asset types,
+				// including TextAsset and Texture2D.
+				// ------------------------------------------------------------
+
+				if (targetInfo.TypeId == 213)
+				{
+					AssetsTools.NET.AssetTypeValueField reopenedField =
+						verifyManager.GetBaseField(
+							inst,
+							targetInfo);
+
+					if (reopenedField == null ||
+						reopenedField.IsDummy)
+					{
+						throw new InvalidDataException(
+							"[POST-COMMIT] Could not obtain reopened Sprite BaseField.");
+					}
+
+					AssetsTools.NET.AssetTypeValueField reopenedTextureRect =
+						reopenedField["m_RD"]["textureRect"];
+
+					AssetsTools.NET.AssetTypeValueField reopenedTextureRectOffset =
+						reopenedField["m_RD"]["textureRectOffset"];
+
+					DebugStr(
+						"[POST-COMMIT] REOPENED Sprite textureRect: " +
+						$"x={reopenedTextureRect["x"].AsFloat}, " +
+						$"y={reopenedTextureRect["y"].AsFloat}, " +
+						$"width={reopenedTextureRect["width"].AsFloat}, " +
+						$"height={reopenedTextureRect["height"].AsFloat}");
+
+					DebugStr(
+						"[POST-COMMIT] REOPENED Sprite textureRectOffset: " +
+						$"x={reopenedTextureRectOffset["x"].AsFloat}, " +
+						$"y={reopenedTextureRectOffset["y"].AsFloat}");
+				}
+				else
+				{
+					DebugStr(
+						$"[POST-COMMIT] Semantic Sprite verification skipped for " +
+						$"TypeID={targetInfo.TypeId}.");
+				}
+			}
+			finally
+			{
+				try
+				{
+					verifyManager.UnloadAllAssetsFiles(
+						true);
+				}
+				catch
+				{
+				}
+
+				try
+				{
+					verifyManager.UnloadAllBundleFiles();
+				}
+				catch
+				{
+				}
 			}
 		}
 
@@ -1803,23 +2148,38 @@ namespace UAFGJ
 				}
 
 				// ====================================================
-				// READ FINAL TARGET PAYLOAD
+				// READ FINAL TARGET PAYLOAD FROM RAW FILE DATA
 				// ====================================================
+				//
+				// IMPORTANT:
+				// The authoritative payload check must use the actual bytes
+				// stored in the reopened final assets file, not a reserialized
+				// BaseField. UABEA/AssetStudio read the serialized asset payload.
+				// We still keep targetField above for structural validation.
+				//
 
-				byte[] finalTargetData;
+				byte[] finalTargetData =
+					ReadRawAssetBytes(
+						inst,
+						targetInfo);
 
-				if (rawTextKind)
-				{
-					finalTargetData =
-						ReadRawAssetBytes(
-							inst,
-							targetInfo);
-				}
-				else
-				{
-					finalTargetData =
-						targetField.WriteToByteArray();
-				}
+				DebugStr(
+					$"[CHECK] FINAL RAW TARGET: " +
+					$"PID={targetInfo.PathId}, " +
+					$"TypeID={targetInfo.TypeId}, " +
+					$"ByteSize={targetInfo.ByteSize}, " +
+					$"bytes={finalTargetData.Length}, " +
+					$"SHA256={Sha256Hex(finalTargetData)}");
+
+				DebugStr(
+					$"[CHECK] FINAL EXPECTED RAW TARGET: " +
+					$"bytes={expectedTargetData.Length}, " +
+					$"SHA256={Sha256Hex(expectedTargetData)}");
+
+				ComparePayloads(
+					"[CHECK] FINAL RAW TARGET",
+					finalTargetData,
+					expectedTargetData);
 
 				if (finalTargetData == null ||
 					finalTargetData.Length == 0)
@@ -2233,6 +2593,453 @@ namespace UAFGJ
 				sha.ComputeHash(
 					data ??
 					Array.Empty<byte>()));
+		}
+
+		private static byte[] ReadBundleDirectoryEntryBytes(
+	BundleFileInstance bundleInst,
+	string assetfileName)
+		{
+			if (bundleInst == null ||
+				bundleInst.file == null)
+			{
+				throw new InvalidOperationException(
+					"Bundle instance is null.");
+			}
+
+			int dirIndex =
+				bundleInst.file.GetFileIndex(
+					assetfileName);
+
+			if (dirIndex < 0)
+			{
+				throw new InvalidDataException(
+					$"Bundle entry not found: {assetfileName}");
+			}
+
+			bundleInst.file.GetFileRange(
+				dirIndex,
+				out long offset,
+				out long length);
+
+			if (offset < 0 ||
+				length < 0 ||
+				length > int.MaxValue)
+			{
+				throw new InvalidDataException(
+					$"Invalid bundle entry range: " +
+					$"name='{assetfileName}', " +
+					$"offset={offset}, " +
+					$"length={length}");
+			}
+
+			AssetsFileReader reader =
+				bundleInst.file.DataReader;
+
+			if (reader == null)
+			{
+				throw new InvalidDataException(
+					"Bundle DataReader is null.");
+			}
+
+			reader.Position = offset;
+
+			byte[] data =
+				reader.ReadBytes(
+					(int)length);
+
+			if (data == null ||
+				data.Length != (int)length)
+			{
+				throw new EndOfStreamException(
+					$"Could not read bundle entry '{assetfileName}'. " +
+					$"Expected={length}, " +
+					$"Actual={(data == null ? 0 : data.Length)}");
+			}
+
+			return data;
+		}
+
+		private static void DebugBundleEntryBytes(
+	BundleFileInstance bundleInst,
+	string assetfileName,
+	string label,
+	byte[] expectedData)
+		{
+			try
+			{
+				byte[] actualData =
+					ReadBundleDirectoryEntryBytes(
+						bundleInst,
+						assetfileName);
+
+				DebugStr(
+					$"[BUNDLE DEBUG] {label}: " +
+					$"entry='{assetfileName}', " +
+					$"bytes={actualData.Length}, " +
+					$"SHA256={Sha256Hex(actualData)}");
+
+				if (expectedData == null)
+				{
+					DebugStr(
+						$"[BUNDLE DEBUG] {label}: " +
+						"no expected payload supplied.");
+					return;
+				}
+
+				DebugStr(
+					$"[BUNDLE DEBUG] {label}: " +
+					$"expectedBytes={expectedData.Length}, " +
+					$"expectedSHA256={Sha256Hex(expectedData)}");
+
+				int compareLength =
+					Math.Min(
+						actualData.Length,
+						expectedData.Length);
+
+				int firstDifference =
+					-1;
+
+				for (int i = 0;
+					 i < compareLength;
+					 i++)
+				{
+					if (actualData[i] != expectedData[i])
+					{
+						firstDifference = i;
+						break;
+					}
+				}
+
+				if (firstDifference >= 0)
+				{
+					DebugStr(
+						$"[BUNDLE DEBUG] {label}: FIRST DIFFERENCE " +
+						$"offset={firstDifference}, " +
+						$"actual=0x{actualData[firstDifference]:X2}, " +
+						$"expected=0x{expectedData[firstDifference]:X2}");
+				}
+				else if (actualData.Length != expectedData.Length)
+				{
+					DebugStr(
+						$"[BUNDLE DEBUG] {label}: " +
+						$"common prefix={compareLength}, " +
+						$"but lengths differ.");
+				}
+				else
+				{
+					DebugStr(
+						$"[BUNDLE DEBUG] {label}: " +
+						"entry bytes are byte-identical to expected payload.");
+				}
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[BUNDLE DEBUG] {label}: FAILED: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				DebugStr(
+					ex.ToString());
+			}
+		}
+
+		private static byte[] ReadRawAssetBytesFromAssetsFile(
+	AssetsFile assetsFile,
+	AssetsFileReader reader,
+	AssetFileInfo info)
+		{
+			if (assetsFile == null)
+			{
+				throw new ArgumentNullException(
+					nameof(assetsFile));
+			}
+
+			if (reader == null)
+			{
+				throw new ArgumentNullException(
+					nameof(reader));
+			}
+
+			if (info == null)
+			{
+				throw new ArgumentNullException(
+					nameof(info));
+			}
+
+			long absoluteOffset =
+				info.GetAbsoluteByteOffset(
+					assetsFile);
+
+			if (absoluteOffset < 0)
+			{
+				throw new InvalidDataException(
+					$"Invalid absolute asset offset: {absoluteOffset}");
+			}
+
+			if (info.ByteSize < 0 ||
+				info.ByteSize > int.MaxValue)
+			{
+				throw new InvalidDataException(
+					$"Invalid asset byte size: {info.ByteSize}");
+			}
+
+			reader.Position =
+				absoluteOffset;
+
+			byte[] data =
+				reader.ReadBytes(
+					(int)info.ByteSize);
+
+			if (data == null ||
+				data.Length != (int)info.ByteSize)
+			{
+				throw new EndOfStreamException(
+					$"Could not read raw asset payload. " +
+					$"Expected={info.ByteSize}, " +
+					$"Actual={(data == null ? 0 : data.Length)}");
+			}
+
+			return data;
+		}
+
+		private static void ComparePayloads(
+	string label,
+	byte[] actual,
+	byte[] expected)
+		{
+			if (actual == null ||
+				expected == null)
+			{
+				DebugStr(
+					$"{label}: comparison skipped because one payload is null.");
+				return;
+			}
+
+			int compareLength =
+				Math.Min(
+					actual.Length,
+					expected.Length);
+
+			int firstDifference =
+				-1;
+
+			for (int i = 0;
+				 i < compareLength;
+				 i++)
+			{
+				if (actual[i] != expected[i])
+				{
+					firstDifference = i;
+					break;
+				}
+			}
+
+			if (firstDifference >= 0)
+			{
+				DebugStr(
+					$"{label}: FIRST DIFFERENCE " +
+					$"offset={firstDifference}, " +
+					$"actual=0x{actual[firstDifference]:X2}, " +
+					$"expected=0x{expected[firstDifference]:X2}");
+			}
+			else if (actual.Length != expected.Length)
+			{
+				DebugStr(
+					$"{label}: common prefix={compareLength}, " +
+					$"length mismatch actual={actual.Length}, " +
+					$"expected={expected.Length}");
+			}
+			else
+			{
+				DebugStr(
+					$"{label}: payloads are byte-identical.");
+			}
+		}
+
+		private static void DebugReloadedStage1Target(
+	BundleFileInstance bundleInst,
+	string assetfileName,
+	long targetPathId)
+		{
+			try
+			{
+				AssetsManager verifyManager =
+					new AssetsManager();
+
+				BundleFileInstance verifyBundle =
+					verifyManager.LoadBundleFile(
+						assetfileName);
+
+				// This overload is intentionally not used here.
+				// The actual bundle entry is already available from bundleInst.
+				_ = verifyBundle;
+				_ = targetPathId;
+			}
+			catch
+			{
+			}
+		}
+
+		private static void DebugFindFloatPatterns(
+	string label,
+	byte[] payload)
+		{
+			if (payload == null || payload.Length == 0)
+			{
+				DebugStr(
+					$"[FLOAT DEBUG] {label}: empty payload.");
+				return;
+			}
+
+			float[] values =
+			{
+		91.07612f,
+		164.02675f,
+		1871.8971f,
+		170.89714f,
+		1819.8971f,
+		351.98532f,
+		0.0f
+	};
+
+			DebugStr(
+				$"[FLOAT DEBUG] ===== {label} ===== " +
+				$"bytes={payload.Length}");
+
+			foreach (float value in values)
+			{
+				byte[] pattern =
+					BitConverter.GetBytes(value);
+
+				List<int> offsets =
+					new List<int>();
+
+				for (int i = 0;
+					 i <= payload.Length - pattern.Length;
+					 i++)
+				{
+					bool match = true;
+
+					for (int j = 0;
+						 j < pattern.Length;
+						 j++)
+					{
+						if (payload[i + j] != pattern[j])
+						{
+							match = false;
+							break;
+						}
+					}
+
+					if (match)
+					{
+						offsets.Add(i);
+					}
+				}
+
+				string offsetText =
+					offsets.Count == 0
+						? "<none>"
+						: string.Join(
+							", ",
+							offsets.Take(20));
+
+				DebugStr(
+					$"[FLOAT DEBUG] value={value.ToString(
+							System.Globalization.CultureInfo.InvariantCulture)}, " +
+					$"bytes={Convert.ToHexString(pattern)}, " +
+					$"count={offsets.Count}, " +
+					$"offsets={offsetText}");
+			}
+
+			DebugStr(
+				$"[FLOAT DEBUG] ===== END {label} =====");
+		}
+
+		private static void DebugPayloadWindow(
+	string label,
+	byte[] payload,
+	int offset,
+	int radius = 32)
+		{
+			if (payload == null ||
+				payload.Length == 0)
+			{
+				DebugStr(
+					$"[WINDOW] {label}: payload is null/empty.");
+
+				return;
+			}
+
+			if (offset < 0 ||
+				offset >= payload.Length)
+			{
+				DebugStr(
+					$"[WINDOW] {label}: " +
+					$"offset={offset} is outside payload " +
+					$"(length={payload.Length}).");
+
+				return;
+			}
+
+			if (radius < 0)
+			{
+				radius = 0;
+			}
+
+			long startLong =
+				(long)offset -
+				radius;
+
+			long endLong =
+				(long)offset +
+				radius;
+
+			if (startLong < 0)
+			{
+				startLong = 0;
+			}
+
+			if (endLong > payload.Length)
+			{
+				endLong = payload.Length;
+			}
+
+			int start =
+				(int)startLong;
+
+			int end =
+				(int)endLong;
+
+			if (end <= start)
+			{
+				DebugStr(
+					$"[WINDOW] {label}: " +
+					$"invalid window start={start}, end={end}.");
+
+				return;
+			}
+
+			int length =
+				end - start;
+
+			byte[] window =
+				new byte[length];
+
+			Buffer.BlockCopy(
+				payload,
+				start,
+				window,
+				0,
+				length);
+
+			DebugStr(
+				$"[WINDOW] {label}: " +
+				$"offset={offset}, " +
+				$"range={start}..{end - 1}");
+
+			DebugStr(
+				$"[WINDOW] {Convert.ToHexString(window)}");
 		}
 	}
 }

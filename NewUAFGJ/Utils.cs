@@ -3145,7 +3145,6 @@ namespace UAFGJ
 		// ============================================================
 		// APPLY FULL SPRITE DUMP
 		// ============================================================
-
 		private static byte[] ApplySpriteStructuralDumpToBaseField(
 			string inputFile,
 			AssetsTools.NET.AssetTypeValueField baseField)
@@ -3190,6 +3189,152 @@ namespace UAFGJ
 				$"[SPRITE] Structural mapping passed for " +
 				$"{matches.Count} scalar fields. Applying values.");
 
+			// ========================================================
+			// DEBUG: FIND THE ACTUAL MAPPED textureRect FIELDS
+			// ========================================================
+
+			foreach (DumpTargetMatch match in matches)
+			{
+				if (match == null ||
+					match.Dump == null ||
+					match.Target == null)
+				{
+					continue;
+				}
+
+				string dumpPath =
+					match.Dump.Path ?? "";
+
+				string fieldName =
+					match.Dump.FieldName ?? "";
+
+				if (dumpPath.IndexOf(
+						"textureRect",
+						StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					continue;
+				}
+
+				if (!string.Equals(
+					fieldName,
+					"x",
+					StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"y",
+						StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"width",
+						StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"height",
+						StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				DebugStr(
+					$"[SPRITE] MAPPED textureRect: " +
+					$"dumpPath='{match.Dump.Path}', " +
+					$"targetPath='{match.Target.Path}', " +
+					$"targetType='{match.Target.Type}', " +
+					$"field='{match.Target.FieldName}', " +
+					$"dumpValue='{match.Dump.Value}'");
+			}
+
+			// ========================================================
+			// DEBUG: READ MAPPED textureRect VALUES BEFORE APPLY
+			// ========================================================
+
+			foreach (DumpTargetMatch match in matches)
+			{
+				if (match == null ||
+					match.Dump == null ||
+					match.Target == null ||
+					match.Target.Field == null ||
+					match.Target.Field.IsDummy)
+				{
+					continue;
+				}
+
+				string dumpPath =
+					match.Dump.Path ?? "";
+
+				if (dumpPath.IndexOf(
+						"textureRect",
+						StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					continue;
+				}
+
+				string fieldName =
+					match.Dump.FieldName ?? "";
+
+				if (!string.Equals(
+					fieldName,
+					"x",
+					StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"y",
+						StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"width",
+						StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"height",
+						StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				AssetTypeValueField target =
+					match.Target.Field;
+
+				if (target.Value == null)
+				{
+					DebugStr(
+						$"[SPRITE] textureRect BEFORE: " +
+						$"targetPath='{match.Target.Path}', " +
+						$"field='{fieldName}', " +
+						"value=<null>");
+					continue;
+				}
+
+				if (target.Value.ValueType ==
+					AssetValueType.Float)
+				{
+					DebugStr(
+						$"[SPRITE] textureRect BEFORE: " +
+						$"targetPath='{match.Target.Path}', " +
+						$"field='{fieldName}', " +
+						$"value={target.AsFloat.ToString(
+							"R",
+							CultureInfo.InvariantCulture)}");
+				}
+				else
+				{
+					DebugStr(
+						$"[SPRITE] textureRect BEFORE: " +
+						$"targetPath='{match.Target.Path}', " +
+						$"field='{fieldName}', " +
+						$"type={target.Value.ValueType}, " +
+						$"value='{ReadFieldAsDumpValue(target)}'");
+				}
+			}
+
+			// ========================================================
+			// APPLY ALL MATCHED VALUES
+			// ========================================================
+
+			DebugSpriteTextureRectField(
+				baseField,
+				"BEFORE APPLY");
+
 			foreach (DumpTargetMatch match in matches)
 			{
 				try
@@ -3208,6 +3353,97 @@ namespace UAFGJ
 				}
 			}
 
+			DebugSpriteTextureRectField(
+				baseField,
+				"AFTER APPLY");
+
+			// ========================================================
+			// DEBUG: READ MAPPED textureRect VALUES AFTER APPLY
+			// ========================================================
+
+			foreach (DumpTargetMatch match in matches)
+			{
+				if (match == null ||
+					match.Dump == null ||
+					match.Target == null ||
+					match.Target.Field == null ||
+					match.Target.Field.IsDummy)
+				{
+					continue;
+				}
+
+				string dumpPath =
+					match.Dump.Path ?? "";
+
+				if (dumpPath.IndexOf(
+						"textureRect",
+						StringComparison.OrdinalIgnoreCase) < 0)
+				{
+					continue;
+				}
+
+				string fieldName =
+					match.Dump.FieldName ?? "";
+
+				if (!string.Equals(
+					fieldName,
+					"x",
+					StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"y",
+						StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"width",
+						StringComparison.Ordinal) &&
+					!string.Equals(
+						fieldName,
+						"height",
+						StringComparison.Ordinal))
+				{
+					continue;
+				}
+
+				AssetTypeValueField target =
+					match.Target.Field;
+
+				if (target.Value == null)
+				{
+					DebugStr(
+						$"[SPRITE] textureRect AFTER: " +
+						$"targetPath='{match.Target.Path}', " +
+						$"field='{fieldName}', " +
+						"value=<null>");
+					continue;
+				}
+
+				if (target.Value.ValueType ==
+					AssetValueType.Float)
+				{
+					DebugStr(
+						$"[SPRITE] textureRect AFTER: " +
+						$"targetPath='{match.Target.Path}', " +
+						$"field='{fieldName}', " +
+						$"value={target.AsFloat.ToString(
+							"R",
+							CultureInfo.InvariantCulture)}");
+				}
+				else
+				{
+					DebugStr(
+						$"[SPRITE] textureRect AFTER: " +
+						$"targetPath='{match.Target.Path}', " +
+						$"field='{fieldName}', " +
+						$"type={target.Value.ValueType}, " +
+						$"value='{ReadFieldAsDumpValue(target)}'");
+				}
+			}
+
+			// ========================================================
+			// SERIALIZE
+			// ========================================================
+
 			byte[] data =
 				baseField.WriteToByteArray();
 
@@ -3218,6 +3454,7 @@ namespace UAFGJ
 
 			return data;
 		}
+
 
 		private static List<DumpTargetMatch>
 			BuildStructuralDumpTargetMatchesWithByteArrays(
@@ -4206,5 +4443,452 @@ namespace UAFGJ
 						field.Value.ValueType);
 			}
 		}
+		private static void DebugSpriteTextureRectField(
+			AssetsTools.NET.AssetTypeValueField baseField,
+			string label)
+		{
+			try
+			{
+				DebugStr(
+					$"[SPRITE] ===== Sprite Rect DEBUG ({label}) =====");
+
+				if (baseField == null ||
+					baseField.IsDummy)
+				{
+					DebugStr(
+						"[SPRITE] BaseField is null/dummy.");
+
+					return;
+				}
+
+				// ========================================================
+				// HELPER: PRINT ONE RECTF
+				// ========================================================
+
+				void PrintRect(
+					string rectPath,
+					AssetsTools.NET.AssetTypeValueField rectField)
+				{
+					if (rectField == null ||
+						rectField.IsDummy)
+					{
+						DebugStr(
+							$"[SPRITE] {rectPath}: NOT RESOLVED.");
+
+						return;
+					}
+
+					DebugStr(
+						$"[SPRITE] {rectPath}: " +
+						$"TemplateName='{rectField.TemplateField?.Name ?? "<null>"}', " +
+						$"ValueType={(rectField.Value != null
+							? rectField.Value.ValueType.ToString()
+							: "<null>")}, " +
+						$"Children={rectField.Children?.Count ?? 0}");
+
+					AssetTypeValueField xField =
+						FindDirectChildByName(
+							rectField,
+							"x");
+
+					AssetTypeValueField yField =
+						FindDirectChildByName(
+							rectField,
+							"y");
+
+					AssetTypeValueField widthField =
+						FindDirectChildByName(
+							rectField,
+							"width");
+
+					AssetTypeValueField heightField =
+						FindDirectChildByName(
+							rectField,
+							"height");
+
+					string xValue =
+						"<missing>";
+
+					string yValue =
+						"<missing>";
+
+					string widthValue =
+						"<missing>";
+
+					string heightValue =
+						"<missing>";
+
+					if (xField != null &&
+						!xField.IsDummy &&
+						xField.Value != null)
+					{
+						if (xField.Value.ValueType ==
+							AssetValueType.Float)
+						{
+							xValue =
+								xField.AsFloat.ToString(
+									"R",
+									CultureInfo.InvariantCulture);
+						}
+						else
+						{
+							xValue =
+								ReadFieldAsDumpValue(
+									xField);
+						}
+					}
+
+					if (yField != null &&
+						!yField.IsDummy &&
+						yField.Value != null)
+					{
+						if (yField.Value.ValueType ==
+							AssetValueType.Float)
+						{
+							yValue =
+								yField.AsFloat.ToString(
+									"R",
+									CultureInfo.InvariantCulture);
+						}
+						else
+						{
+							yValue =
+								ReadFieldAsDumpValue(
+									yField);
+						}
+					}
+
+					if (widthField != null &&
+						!widthField.IsDummy &&
+						widthField.Value != null)
+					{
+						if (widthField.Value.ValueType ==
+							AssetValueType.Float)
+						{
+							widthValue =
+								widthField.AsFloat.ToString(
+									"R",
+									CultureInfo.InvariantCulture);
+						}
+						else
+						{
+							widthValue =
+								ReadFieldAsDumpValue(
+									widthField);
+						}
+					}
+
+					if (heightField != null &&
+						!heightField.IsDummy &&
+						heightField.Value != null)
+					{
+						if (heightField.Value.ValueType ==
+							AssetValueType.Float)
+						{
+							heightValue =
+								heightField.AsFloat.ToString(
+									"R",
+									CultureInfo.InvariantCulture);
+						}
+						else
+						{
+							heightValue =
+								ReadFieldAsDumpValue(
+									heightField);
+						}
+					}
+
+					DebugStr(
+						$"[SPRITE] {rectPath}: " +
+						$"x={xValue}, " +
+						$"y={yValue}, " +
+						$"width={widthValue}, " +
+						$"height={heightValue}");
+
+					// ====================================================
+					// RAW SERIALIZED RECTF
+					// ====================================================
+
+					try
+					{
+						byte[] rectBytes =
+							rectField.WriteToByteArray();
+
+						DebugStr(
+							$"[SPRITE] {rectPath}: serialized bytes=" +
+							$"{rectBytes.Length} " +
+							$"SHA256={Sha256Hex(rectBytes)}");
+
+						if (rectBytes.Length >= 16)
+						{
+							DebugStr(
+								$"[SPRITE] {rectPath}: first 16 bytes=" +
+								$"{Convert.ToHexString(
+									rectBytes,
+									0,
+									16)}");
+
+							using (var ms =
+								new MemoryStream(
+									rectBytes))
+							using (var reader =
+								new BinaryReader(ms))
+							{
+								float rawX =
+									reader.ReadSingle();
+
+								float rawY =
+									reader.ReadSingle();
+
+								float rawWidth =
+									reader.ReadSingle();
+
+								float rawHeight =
+									reader.ReadSingle();
+
+								DebugStr(
+									$"[SPRITE] {rectPath}: " +
+									$"raw serialized float sequence: " +
+									$"x={rawX.ToString(
+										"R",
+										CultureInfo.InvariantCulture)}, " +
+									$"y={rawY.ToString(
+										"R",
+										CultureInfo.InvariantCulture)}, " +
+									$"width={rawWidth.ToString(
+										"R",
+										CultureInfo.InvariantCulture)}, " +
+									$"height={rawHeight.ToString(
+										"R",
+										CultureInfo.InvariantCulture)}");
+							}
+						}
+					}
+					catch (Exception ex)
+					{
+						DebugStr(
+							$"[SPRITE] {rectPath}: raw serialization inspection failed: " +
+							$"{ex.GetType().Name}: {ex.Message}");
+					}
+				}
+
+				// ========================================================
+				// m_Rect
+				// ========================================================
+
+				AssetTypeValueField mRect =
+					FindDirectChildByName(
+						baseField,
+						"m_Rect");
+
+				PrintRect(
+					"m_Rect",
+					mRect);
+
+				// ========================================================
+				// m_RD
+				// ========================================================
+
+				AssetTypeValueField mRD =
+					FindDirectChildByName(
+						baseField,
+						"m_RD");
+
+				if (mRD == null ||
+					mRD.IsDummy)
+				{
+					DebugStr(
+						"[SPRITE] m_RD: NOT RESOLVED.");
+				}
+				else
+				{
+					DebugStr(
+						$"[SPRITE] m_RD: " +
+						$"TemplateName='{mRD.TemplateField?.Name ?? "<null>"}', " +
+						$"Children={mRD.Children?.Count ?? 0}");
+
+					// ====================================================
+					// m_RD/textureRect
+					// ====================================================
+
+					AssetTypeValueField textureRect =
+						FindDirectChildByName(
+							mRD,
+							"textureRect");
+
+					PrintRect(
+						"m_RD/textureRect",
+						textureRect);
+
+					// ====================================================
+					// m_RD/textureRectOffset
+					// ====================================================
+
+					AssetTypeValueField textureRectOffset =
+						FindDirectChildByName(
+							mRD,
+							"textureRectOffset");
+
+					PrintRect(
+						"m_RD/textureRectOffset",
+						textureRectOffset);
+
+					AssetTypeValueField vertexData =
+	FindDirectChildByName(
+		mRD,
+		"m_VertexData");
+
+					if (vertexData == null ||
+						vertexData.IsDummy)
+					{
+						DebugStr(
+							"[SPRITE] m_RD/m_VertexData: NOT RESOLVED.");
+					}
+					else
+					{
+						DebugStr(
+							$"[SPRITE] m_RD/m_VertexData: " +
+							$"TemplateName='{vertexData.TemplateField?.Name ?? "<null>"}', " +
+							$"Children={vertexData.Children?.Count ?? 0}");
+
+						AssetTypeValueField vertexCount =
+							FindDirectChildByName(
+								vertexData,
+								"m_VertexCount");
+
+						AssetsTools.NET.AssetTypeValueField channels =
+						FindDirectChildByName(
+							vertexData,
+							"m_Channels");
+
+						if (channels == null ||
+							channels.IsDummy)
+						{
+							DebugStr(
+								"[SPRITE] m_RD/m_VertexData/m_Channels: NOT RESOLVED.");
+						}
+						else
+						{
+							DebugStr(
+								$"[SPRITE] m_RD/m_VertexData/m_Channels wrapper children=" +
+								$"{channels.Children.Count}");
+
+							AssetsTools.NET.AssetTypeValueField channelsArray =
+								vertexData["m_Channels.Array"];
+
+							if (channelsArray == null ||
+								channelsArray.IsDummy)
+							{
+								DebugStr(
+									"[SPRITE] m_RD/m_VertexData/m_Channels.Array: NOT RESOLVED.");
+							}
+							else
+							{
+								DebugStr(
+									$"[SPRITE] m_RD/m_VertexData/m_Channels.Array children=" +
+									$"{channelsArray.Children.Count}");
+
+								for (int i = 0;
+									 i < channelsArray.Children.Count;
+									 i++)
+								{
+									AssetsTools.NET.AssetTypeValueField channel =
+										channelsArray.Children[i];
+
+									if (channel == null ||
+										channel.IsDummy)
+									{
+										DebugStr(
+											$"[SPRITE] Channel[{i}]: null/dummy.");
+
+										continue;
+									}
+
+									AssetsTools.NET.AssetTypeValueField stream =
+										channel["stream"];
+
+									AssetsTools.NET.AssetTypeValueField offset =
+										channel["offset"];
+
+									AssetsTools.NET.AssetTypeValueField format =
+										channel["format"];
+
+									AssetsTools.NET.AssetTypeValueField dimension =
+										channel["dimension"];
+
+									DebugStr(
+										$"[SPRITE] Channel[{i}]: " +
+										$"stream={stream.AsInt}, " +
+										$"offset={offset.AsInt}, " +
+										$"format={format.AsInt}, " +
+										$"dimension={dimension.AsInt}");
+								}
+							}
+						}
+
+						AssetTypeValueField dataSize =
+							FindDirectChildByName(
+								vertexData,
+								"m_DataSize");
+
+						if (vertexCount != null &&
+							!vertexCount.IsDummy)
+						{
+							DebugStr(
+								$"[SPRITE] m_RD/m_VertexData/m_VertexCount=" +
+								$"{vertexCount.AsInt}");
+						}
+						else
+						{
+							DebugStr(
+								"[SPRITE] m_RD/m_VertexData/m_VertexCount: NOT RESOLVED.");
+						}
+
+						if (channels != null &&
+							!channels.IsDummy)
+						{
+							DebugStr(
+								$"[SPRITE] m_RD/m_VertexData/m_Channels children=" +
+								$"{channels.Children?.Count ?? 0}");
+						}
+						else
+						{
+							DebugStr(
+								"[SPRITE] m_RD/m_VertexData/m_Channels: NOT RESOLVED.");
+						}
+
+						if (dataSize != null &&
+							!dataSize.IsDummy)
+						{
+							byte[] dataSizeBytes =
+								dataSize.WriteToByteArray();
+
+							DebugStr(
+								$"[SPRITE] m_RD/m_VertexData/m_DataSize " +
+								$"serialized bytes={dataSizeBytes.Length}");
+						}
+						else
+						{
+							DebugStr(
+								"[SPRITE] m_RD/m_VertexData/m_DataSize: NOT RESOLVED.");
+						}
+					}
+				}
+
+				DebugStr(
+					$"[SPRITE] ===== end Sprite Rect DEBUG ({label}) =====");
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[SPRITE] Sprite Rect DEBUG failed: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				DebugStr(
+					ex.ToString());
+			}
+		}
+		
+
 	}
 }

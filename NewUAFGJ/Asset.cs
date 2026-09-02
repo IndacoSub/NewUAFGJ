@@ -298,5 +298,145 @@ namespace UAFGJ
 					ex.Message);
 			}
 		}
+		private static void DebugRawVsBaseFieldSprite(
+			AssetsFileInstance assetInst,
+			AssetFileInfo afie,
+			AssetsTools.NET.AssetTypeValueField baseField)
+		{
+			try
+			{
+				if (assetInst == null ||
+					afie == null ||
+					baseField == null ||
+					baseField.IsDummy)
+				{
+					DebugStr(
+						"[SPRITE] RAW/BaseField comparison skipped: " +
+						"invalid state.");
+
+					return;
+				}
+
+				/*
+				 * IMPORTANT:
+				 *
+				 * ReadRawAssetBytes already exists in MonoBehaviour.cs.
+				 * Reuse that implementation instead of defining another one.
+				 */
+				byte[] rawAsset =
+					ReadRawAssetBytes(
+						assetInst,
+						afie);
+
+				byte[] baseFieldData =
+					baseField.WriteToByteArray();
+
+				DebugFindFloatPatterns(
+				"SPRITE BASEFIELD",
+				baseFieldData);
+
+				DebugPayloadWindow(
+					"ORIGINAL textureRect",
+					baseFieldData,
+					3176);
+
+				DebugStr(
+					$"[SPRITE] RAW asset comparison: " +
+					$"rawBytes={rawAsset.Length}, " +
+					$"rawSHA={Sha256Hex(rawAsset)}, " +
+					$"baseFieldBytes={baseFieldData.Length}, " +
+					$"baseFieldSHA={Sha256Hex(baseFieldData)}");
+
+				int compareLength =
+					Math.Min(
+						rawAsset.Length,
+						baseFieldData.Length);
+
+				int firstDifference =
+					-1;
+
+				for (int i = 0;
+					 i < compareLength;
+					 i++)
+				{
+					if (rawAsset[i] != baseFieldData[i])
+					{
+						firstDifference =
+							i;
+
+						break;
+					}
+				}
+
+				if (firstDifference >= 0)
+				{
+					DebugStr(
+						$"[SPRITE] RAW/BaseField first byte difference: " +
+						$"offset={firstDifference}, " +
+						$"raw=0x{rawAsset[firstDifference]:X2}, " +
+						$"baseField=0x{baseFieldData[firstDifference]:X2}");
+				}
+				else if (rawAsset.Length !=
+						 baseFieldData.Length)
+				{
+					DebugStr(
+						$"[SPRITE] RAW/BaseField contents match for first " +
+						$"{compareLength} bytes, but lengths differ.");
+				}
+				else
+				{
+					DebugStr(
+						"[SPRITE] RAW asset and BaseField serialization are byte-identical.");
+				}
+
+				// ========================================================
+				// FIRST 64 RAW BYTES
+				// ========================================================
+
+				int rawPreviewLength =
+					Math.Min(
+						64,
+						rawAsset.Length);
+
+				if (rawPreviewLength > 0)
+				{
+					DebugStr(
+						$"[SPRITE] RAW asset first {rawPreviewLength} bytes=" +
+						Convert.ToHexString(
+							rawAsset,
+							0,
+							rawPreviewLength));
+				}
+
+				// ========================================================
+				// FIRST 64 BASEFIELD BYTES
+				// ========================================================
+
+				int basePreviewLength =
+					Math.Min(
+						64,
+						baseFieldData.Length);
+
+				if (basePreviewLength > 0)
+				{
+					DebugStr(
+						$"[SPRITE] BaseField first {basePreviewLength} bytes=" +
+						Convert.ToHexString(
+							baseFieldData,
+							0,
+							basePreviewLength));
+				}
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[SPRITE] RAW/BaseField comparison failed: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				DebugStr(
+					ex.ToString());
+			}
+		}
+
 	}
 }

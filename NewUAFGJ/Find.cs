@@ -454,6 +454,7 @@ namespace UAFGJ
 			string inputFile,
 			AssetsTools.NET.AssetTypeValueField baseField,
 			AssetFileInfo afie,
+			AssetsFileInstance assetInst,
 			string fileKind,
 			out byte[] originalSerializedData,
 			out byte[] replacementData)
@@ -513,6 +514,11 @@ namespace UAFGJ
 				$"TypeID={afie.TypeId}, " +
 				$"bytes={originalSerializedData.Length}, " +
 				$"SHA256={Sha256Hex(originalSerializedData)}");
+
+			DebugRawVsBaseFieldSprite(
+				assetInst,
+				afie,
+				baseField);
 
 			try
 			{
@@ -1102,6 +1108,7 @@ namespace UAFGJ
 						inputFile,
 						atvf,
 						afie,
+						assetInst,
 						fileKind,
 						out originalSerializedData,
 						out rawReplacementData);
@@ -1427,6 +1434,7 @@ namespace UAFGJ
 						inputFile,
 						atvf,
 						afie,
+						assetInst,
 						fileKind,
 						out originalSerializedData,
 						out rawReplacementData);
