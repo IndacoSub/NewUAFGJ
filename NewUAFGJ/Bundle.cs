@@ -222,15 +222,17 @@ namespace UAFGJ
 		// ============================================================
 
 		private static void HandleBundle(
-			string ab,
-			string input_file,
-			string specific_pathid,
-			string fileKind)
+	string ab,
+	string input_file,
+	string specific_pathid,
+	string specific_fileid,
+	string fileKind)
 		{
 			LogPhase(
 				$"Bundle start: bundle='{ab}', " +
 				$"input='{input_file}', " +
 				$"pathId='{specific_pathid}', " +
+				$"fileId='{specific_fileid}', " +
 				$"kind='{fileKind}'.");
 
 			string originalBundleSha =
@@ -252,10 +254,6 @@ namespace UAFGJ
 				$"{(File.Exists("classdata.tpk")
 					? Sha256File("classdata.tpk")
 					: "MISSING")}");
-
-			// ========================================================
-			// UNIQUE STAGING FILES
-			// ========================================================
 
 			string tempBundlePath =
 				ab +
@@ -311,7 +309,12 @@ namespace UAFGJ
 						ab);
 
 				if (bundleInst == null)
+				{
+					DisplayStr(
+						"[BUNDLE] Could not load bundle.");
+
 					return;
+				}
 
 				string assetfile_name =
 					GetRightAssetFileNameFromBundle(
@@ -321,6 +324,9 @@ namespace UAFGJ
 				if (string.IsNullOrEmpty(
 					assetfile_name))
 				{
+					DisplayStr(
+						"[BUNDLE] Could not determine contained assets file.");
+
 					return;
 				}
 
@@ -335,7 +341,12 @@ namespace UAFGJ
 						ab);
 
 				if (assetInst == null)
+				{
+					DisplayStr(
+						$"[BUNDLE] Could not load assets file '{assetfile_name}'.");
+
 					return;
+				}
 
 				EnsureClassDatabaseIfNeeded(
 					am,
@@ -353,25 +364,6 @@ namespace UAFGJ
 					$"[CHECK] INPUT bundle compression=" +
 					$"{originalCompression}; " +
 					$"directory entries={originalDirectoryNames.Count}");
-
-				// ====================================================
-				// BEFORE SNAPSHOT
-				// ====================================================
-
-				LogPhase(
-					"Capturing pre-import assets snapshot.");
-
-				AssetsFileSnapshot beforeSnapshot =
-					CaptureAssetsFileSnapshot(
-						am,
-						assetInst,
-						assetfile_name);
-
-				DebugStr(
-					$"[CHECK] BEFORE assets '{assetfile_name}' " +
-					$"SHA256={beforeSnapshot.Sha256} " +
-					$"serializedLength={beforeSnapshot.SerializedLength} " +
-					$"assets={beforeSnapshot.Assets.Count}");
 
 				// ====================================================
 				// IMPORT STATE
@@ -398,7 +390,9 @@ namespace UAFGJ
 
 				LogPhase(
 					$"Beginning import for kind='{fileKind}', " +
-					$"input='{input_file}'.");
+					$"input='{input_file}', " +
+					$"pathId='{specific_pathid}', " +
+					$"fileId='{specific_fileid}'.");
 
 				if (isTextReplacement)
 				{
@@ -408,9 +402,10 @@ namespace UAFGJ
 						ref afie,
 						ref atvf,
 						ref am,
-						ab,
-						assetfile_name,
+						ref ab,
+						ref assetfile_name,
 						specific_pathid,
+						specific_fileid,
 						fileKind,
 						out rawReplacementData,
 						out originalTargetData))
@@ -429,9 +424,10 @@ namespace UAFGJ
 						ref assetInst,
 						ref atvf,
 						ref am,
-						ab,
-						assetfile_name,
+						ref ab,
+						ref assetfile_name,
 						specific_pathid,
+						specific_fileid,
 						fileKind))
 					{
 						return;
@@ -467,7 +463,7 @@ namespace UAFGJ
 				}
 
 				// ====================================================
-				// RESOLVE EFFECTIVE FILE KIND
+				// TARGET MUST EXIST
 				// ====================================================
 
 				if (afie == null)
@@ -478,6 +474,32 @@ namespace UAFGJ
 
 					return;
 				}
+
+				// ====================================================
+				// BEFORE SNAPSHOT
+				// IMPORTANT:
+				// This happens AFTER FileID resolution.
+				// ====================================================
+
+				LogPhase(
+					$"Capturing pre-import assets snapshot " +
+					$"for target file '{assetfile_name}'.");
+
+				AssetsFileSnapshot beforeSnapshot =
+					CaptureAssetsFileSnapshot(
+						am,
+						assetInst,
+						assetfile_name);
+
+				DebugStr(
+					$"[CHECK] BEFORE assets '{assetfile_name}' " +
+					$"SHA256={beforeSnapshot.Sha256} " +
+					$"serializedLength={beforeSnapshot.SerializedLength} " +
+					$"assets={beforeSnapshot.Assets.Count}");
+
+				// ====================================================
+				// RESOLVE EFFECTIVE FILE KIND
+				// ====================================================
 
 				string effectiveFileKind =
 					ResolveEffectiveFileKind(
@@ -683,7 +705,8 @@ namespace UAFGJ
 				DebugStr(
 					ex.ToString());
 
-				Environment.ExitCode = 1;
+				Environment.ExitCode =
+					1;
 			}
 			finally
 			{
@@ -1503,34 +1526,27 @@ namespace UAFGJ
 		// ============================================================
 
 		private static void ReplaceFileWithRetry(
-			string sourcePath,
-			string destinationPath)
+	string sourcePath,
+	string destinationPath)
 		{
-			const int maxAttempts =
-				10;
+			const int maxAttempts = 10;
+			const int initialDelayMs = 250;
+			const int maxDelayMs = 2000;
 
-			const int delayMs =
-				250;
+			Exception lastError = null;
 
-			Exception lastError =
-				null;
-
-			if (!File.Exists(
-				sourcePath))
+			if (!File.Exists(sourcePath))
 			{
 				throw new FileNotFoundException(
 					"Replacement file does not exist.",
 					sourcePath);
 			}
 
-			for (int attempt = 1;
-				 attempt <= maxAttempts;
-				 attempt++)
+			for (int attempt = 1; attempt <= maxAttempts; attempt++)
 			{
 				try
 				{
-					if (File.Exists(
-						destinationPath))
+					if (File.Exists(destinationPath))
 					{
 						try
 						{
@@ -1554,13 +1570,6 @@ namespace UAFGJ
 								destinationPath,
 								true);
 						}
-						catch (IOException)
-						{
-							File.Move(
-								sourcePath,
-								destinationPath,
-								true);
-						}
 					}
 					else
 					{
@@ -1573,23 +1582,25 @@ namespace UAFGJ
 				}
 				catch (IOException ex)
 				{
-					lastError =
-						ex;
+					lastError = ex;
 				}
 				catch (UnauthorizedAccessException ex)
 				{
-					lastError =
-						ex;
+					lastError = ex;
 				}
 
 				if (attempt < maxAttempts)
 				{
+					int delayMs = Math.Min(
+						initialDelayMs * attempt,
+						maxDelayMs);
+
 					DebugStr(
 						$"[SAVE] Destination temporarily unavailable; " +
-						$"retry {attempt}/{maxAttempts - 1}...");
+						$"retry {attempt}/{maxAttempts - 1} " +
+						$"after {delayMs} ms.");
 
-					Thread.Sleep(
-						delayMs);
+					Thread.Sleep(delayMs);
 				}
 			}
 

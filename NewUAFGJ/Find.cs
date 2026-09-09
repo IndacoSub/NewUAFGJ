@@ -29,6 +29,240 @@ namespace UAFGJ
 				out pathId);
 		}
 
+		private sealed class TargetAssetCandidate
+		{
+			public int FileId;
+			public AssetsFileInstance File;
+			public AssetFileInfo Info;
+		}
+
+		private static bool TryParseFileId(
+	string specificFileId,
+	out int fileId)
+		{
+			if (string.IsNullOrWhiteSpace(specificFileId))
+			{
+				fileId = 0;
+				return false;
+			}
+
+			return int.TryParse(
+				specificFileId,
+				out fileId);
+		}
+
+		private static List<TargetAssetCandidate> FindPathIdCandidates(
+	AssetsManager am,
+	AssetsFileInstance relativeTo,
+	long pathId,
+	int typeId)
+		{
+			List<TargetAssetCandidate> candidates =
+				new List<TargetAssetCandidate>();
+
+			if (relativeTo == null)
+			{
+				return candidates;
+			}
+
+			AssetFileInfo localInfo =
+				relativeTo.file.AssetInfos.FirstOrDefault(
+					a =>
+						a.PathId == pathId &&
+						a.TypeId == typeId);
+
+			if (localInfo != null)
+			{
+				candidates.Add(
+					new TargetAssetCandidate
+					{
+						FileId = 0,
+						File = relativeTo,
+						Info = localInfo
+					});
+			}
+
+			for (int fileId = 1;
+				 fileId <= relativeTo.file.Metadata.Externals.Count;
+				 fileId++)
+			{
+				try
+				{
+					var ext =
+						am.GetExtAsset(
+							relativeTo,
+							fileId,
+							pathId,
+							true);
+
+					if (
+						ext.file == null ||
+						ext.info == null)
+					{
+						continue;
+					}
+
+					if (ext.info.TypeId != typeId)
+					{
+						continue;
+					}
+
+					candidates.Add(
+						new TargetAssetCandidate
+						{
+							FileId = fileId,
+							File = ext.file,
+							Info = ext.info
+						});
+				}
+				catch (Exception ex)
+				{
+					DebugStr(
+						$"[TARGET] Failed resolving FileID={fileId}, " +
+						$"PID={pathId}: " +
+						$"{ex.GetType().Name}: {ex.Message}");
+				}
+			}
+
+			return candidates;
+		}
+
+		private static bool SelectTargetCandidate(
+	List<TargetAssetCandidate> candidates,
+	string specificFileId,
+	long pathId,
+	int typeId,
+	out AssetsFileInstance targetFile,
+	out AssetFileInfo targetInfo,
+	out int selectedFileId)
+		{
+			targetFile = null;
+			targetInfo = null;
+			selectedFileId = 0;
+
+			DebugStr(
+				$"[TARGET] Candidates for PID={pathId}, " +
+				$"TypeID={typeId}: {candidates.Count}");
+
+			foreach (TargetAssetCandidate candidate in candidates)
+			{
+				DebugStr(
+					$"[TARGET] Candidate: " +
+					$"FileID={candidate.FileId}, " +
+					$"PID={candidate.Info.PathId}, " +
+					$"TypeID={candidate.Info.TypeId}, " +
+					$"File='{candidate.File.name}'");
+			}
+
+			string normalizedFileId =
+				specificFileId?.Trim() ?? "";
+
+			if (normalizedFileId == "-")
+			{
+				normalizedFileId = "";
+			}
+
+			bool hasFileId =
+				int.TryParse(
+					normalizedFileId,
+					out int requestedFileId);
+
+			if (!string.IsNullOrWhiteSpace(normalizedFileId) &&
+				!hasFileId)
+			{
+				DisplayStr(
+					$"[TARGET] Invalid FileID '{specificFileId}'. " +
+					"Expected an integer or '-'.");
+				return false;
+			}
+
+			if (hasFileId)
+			{
+				DebugStr(
+					$"[TARGET] Explicit FileID requested: {requestedFileId}");
+
+				TargetAssetCandidate selected =
+					candidates.FirstOrDefault(
+						c =>
+							c.FileId == requestedFileId);
+
+				if (selected == null)
+				{
+					DisplayStr(
+						$"[TARGET] FileID={requestedFileId} does not exist " +
+						$"for PID={pathId}, TypeID={typeId}.");
+
+					return false;
+				}
+
+				targetFile =
+					selected.File;
+
+				targetInfo =
+					selected.Info;
+
+				selectedFileId =
+					selected.FileId;
+
+				DebugStr(
+					$"[TARGET] Selected: " +
+					$"FileID={selected.FileId}, " +
+					$"PID={selected.Info.PathId}, " +
+					$"TypeID={selected.Info.TypeId}, " +
+					$"File='{selected.File.name}'");
+
+				return true;
+			}
+
+			if (candidates.Count == 0)
+			{
+				DisplayStr(
+					$"[TARGET] No asset found for " +
+					$"PID={pathId}, TypeID={typeId}.");
+
+				return false;
+			}
+
+			if (candidates.Count > 1)
+			{
+				DisplayStr(
+					$"[FATAL] AMBIGUOUS TARGET: " +
+					$"PID={pathId}, TypeID={typeId} " +
+					$"matches {candidates.Count} assets.");
+
+				DisplayStr(
+					"[TARGET] FileID is required.");
+
+				foreach (TargetAssetCandidate candidate in candidates)
+				{
+					DisplayStr(
+						$"[TARGET]   FileID={candidate.FileId}, " +
+						$"PID={candidate.Info.PathId}, " +
+						$"TypeID={candidate.Info.TypeId}, " +
+						$"File='{candidate.File.name}'");
+				}
+
+				return false;
+			}
+
+			targetFile =
+				candidates[0].File;
+
+			targetInfo =
+				candidates[0].Info;
+
+			selectedFileId =
+				candidates[0].FileId;
+
+			DebugStr(
+				$"[TARGET] Unique target selected automatically: " +
+				$"FileID={selectedFileId}, " +
+				$"PID={pathId}, " +
+				$"TypeID={typeId}, " +
+				$"File='{targetFile.name}'");
+
+			return true;
+		}
 
 		// ============================================================
 		// ASSET NAME
@@ -570,9 +804,10 @@ namespace UAFGJ
 			ref AssetFileInfo afie,
 			ref AssetsTools.NET.AssetTypeValueField atvf,
 			ref AssetsManager am,
-			string asset,
-			string assetfile_name,
+			ref string asset,
+			ref string assetfile_name,
 			string specific_pathid,
+			string specific_fileid,
 			string fileKind,
 			out byte[] rawReplacementData,
 			out byte[] originalSerializedData)
@@ -624,28 +859,191 @@ namespace UAFGJ
 					$"[TXT] Searching assets in '{assetfile_name}' " +
 					$"for exact PID {wantedPathId}");
 
-				AssetFileInfo exactMatch =
+				List<TargetAssetCandidate> candidates =
+	new List<TargetAssetCandidate>();
+
+				AssetFileInfo localInfo =
 					assetInst.file.AssetInfos.FirstOrDefault(
 						a =>
-							a.PathId ==
-							wantedPathId);
+							a.PathId == wantedPathId);
 
-				if (exactMatch == null)
+				if (localInfo != null)
 				{
-					DisplayStr(
-						$"[TXT] Could not find any asset " +
-						$"with path ID {wantedPathId}.");
-
-					return false;
+					candidates.Add(
+						new TargetAssetCandidate
+						{
+							FileId = 0,
+							File = assetInst,
+							Info = localInfo
+						});
 				}
 
-				afie =
-					exactMatch;
+				for (int fileId = 1;
+					 fileId <= assetInst.file.Metadata.Externals.Count;
+					 fileId++)
+				{
+					try
+					{
+						var ext =
+							am.GetExtAsset(
+								assetInst,
+								fileId,
+								wantedPathId,
+								true);
+
+						if (ext.file == null ||
+							ext.info == null)
+						{
+							continue;
+						}
+
+						candidates.Add(
+							new TargetAssetCandidate
+							{
+								FileId = fileId,
+								File = ext.file,
+								Info = ext.info
+							});
+					}
+					catch (Exception ex)
+					{
+						DebugStr(
+							$"[TXT] Failed resolving FileID={fileId}, " +
+							$"PID={wantedPathId}: " +
+							$"{ex.GetType().Name}: {ex.Message}");
+					}
+				}
 
 				DebugStr(
-					$"[TXT] Exact PID found: " +
+					$"[TXT] Candidates for PID={wantedPathId}: " +
+					$"{candidates.Count}");
+
+				foreach (TargetAssetCandidate candidate in candidates)
+				{
+					DebugStr(
+						$"[TXT] Candidate: " +
+						$"FileID={candidate.FileId}, " +
+						$"PID={candidate.Info.PathId}, " +
+						$"TypeID={candidate.Info.TypeId}, " +
+						$"File='{candidate.File.name}'");
+				}
+
+				TargetAssetCandidate selectedCandidate = null;
+
+				if (!string.IsNullOrWhiteSpace(specific_fileid))
+				{
+					if (!int.TryParse(
+						specific_fileid,
+						out int requestedFileId))
+					{
+						DisplayStr(
+							$"[TXT] Invalid FileID '{specific_fileid}'.");
+
+						return false;
+					}
+
+					selectedCandidate =
+						candidates.FirstOrDefault(
+							c =>
+								c.FileId == requestedFileId);
+
+					if (selectedCandidate == null)
+					{
+						DisplayStr(
+							$"[TXT] FileID={requestedFileId} not found " +
+							$"for PID={wantedPathId}.");
+
+						return false;
+					}
+
+					DebugStr(
+						$"[TXT] Explicit FileID selected: " +
+						$"FileID={selectedCandidate.FileId}, " +
+						$"PID={selectedCandidate.Info.PathId}, " +
+						$"TypeID={selectedCandidate.Info.TypeId}");
+				}
+				else
+				{
+					if (candidates.Count == 0)
+					{
+						DisplayStr(
+							$"[TXT] Could not find any asset " +
+							$"with path ID {wantedPathId}.");
+
+						return false;
+					}
+
+					if (candidates.Count == 1)
+					{
+						selectedCandidate =
+							candidates[0];
+					}
+					else
+					{
+						var groupedByType =
+							candidates
+								.GroupBy(
+									c =>
+										c.Info.TypeId)
+								.ToList();
+
+						bool ambiguous =
+							groupedByType.Any(
+								g =>
+									g.Count() > 1);
+
+						if (ambiguous)
+						{
+							DisplayStr(
+								$"[FATAL] AMBIGUOUS TARGET: " +
+								$"PID={wantedPathId} has multiple assets " +
+								$"with the same TypeID.");
+
+							DisplayStr(
+								"[TXT] FileID is required.");
+
+							return false;
+						}
+
+						TargetAssetCandidate localCandidate =
+							candidates.FirstOrDefault(
+								c =>
+									c.FileId == 0);
+
+						if (localCandidate != null)
+						{
+							selectedCandidate =
+								localCandidate;
+						}
+						else
+						{
+							DisplayStr(
+								$"[TXT] PID={wantedPathId} exists in multiple " +
+								$"files with different TypeIDs and no FileID was specified.");
+
+							DisplayStr(
+								"[TXT] FileID is required.");
+
+							return false;
+						}
+					}
+				}
+
+				assetInst =
+					selectedCandidate.File;
+
+				afie =
+					selectedCandidate.Info;
+
+				assetfile_name =
+					selectedCandidate.File.name;
+
+				DebugStr(
+					$"[TXT] Selected target: " +
+					$"FileID={selectedCandidate.FileId}, " +
 					$"PID={afie.PathId}, " +
-					$"TypeID={afie.TypeId}");
+					$"TypeID={afie.TypeId}, " +
+					$"File='{assetfile_name}'");
 
 				// ====================================================
 				// TEXTASSET - TYPEID 49
@@ -1757,9 +2155,10 @@ namespace UAFGJ
 			ref AssetsFileInstance assetInst,
 			ref AssetsTools.NET.AssetTypeValueField atvf,
 			ref AssetsManager am,
-			string asset,
-			string assetfile_name,
+			ref string asset,
+			ref string assetfile_name,
 			string specificPathId,
+			string specificFileId,
 			string fileKind)
 		{
 			if (assetInst == null)
@@ -1800,71 +2199,48 @@ namespace UAFGJ
 			if (hasWantedPathId)
 			{
 				DebugStr(
-					$"[PNG] Searching Texture2D assets in " +
-					$"'{assetfile_name}' for exact PID " +
-					$"{wantedPathId}");
+					$"[PNG] Resolving Texture2D target: " +
+					$"PID={wantedPathId}, " +
+					$"TypeID={(int)AssetClassID.Texture2D}, " +
+					$"FileID='{specificFileId}'.");
 
-				AssetFileInfo exactMatch =
-					assetInst.file.AssetInfos.FirstOrDefault(
-						a =>
-							a.PathId ==
-							wantedPathId &&
-							a.TypeId ==
-							(int)AssetClassID.Texture2D);
+				List<TargetAssetCandidate> candidates =
+					FindPathIdCandidates(
+						am,
+						assetInst,
+						wantedPathId,
+						(int)AssetClassID.Texture2D);
 
-				if (exactMatch == null)
+				AssetsFileInstance targetFile;
+				AssetFileInfo targetInfo;
+				int selectedFileId;
+
+				if (!SelectTargetCandidate(
+					candidates,
+					specificFileId,
+					wantedPathId,
+					(int)AssetClassID.Texture2D,
+					out targetFile,
+					out targetInfo,
+					out selectedFileId))
 				{
-					DisplayStr(
-						$"[PNG] Could not find Texture2D " +
-						$"with path ID {wantedPathId}.");
-
 					return false;
 				}
 
+				AssetsTools.NET.AssetTypeValueField candidate;
+
 				try
 				{
-					var candidate =
+					candidate =
 						am.GetBaseField(
-							assetInst,
-							exactMatch);
-
-					if (candidate == null ||
-						candidate.IsDummy)
-					{
-						DisplayStr(
-							$"[PNG] Texture2D PID {wantedPathId} " +
-							"returned a null/dummy BaseField.");
-
-						return false;
-					}
-
-					afie =
-						exactMatch;
-
-					atvf =
-						candidate;
-
-					string name =
-						GetAssetName(
-							candidate);
-
-					DebugStr(
-						$"[PNG] Found Texture2D by exact PID: " +
-						$"PID={exactMatch.PathId}, " +
-						$"Name='{name}', " +
-						$"TypeID={exactMatch.TypeId}");
-
-					DebugStr(
-						$"[PNG] Importing '{inputFile}' into " +
-						$"Texture2D '{name}'.");
-
-					return true;
+							targetFile,
+							targetInfo);
 				}
 				catch (Exception ex)
 				{
 					DisplayStr(
-						$"[PNG] Failed reading Texture2D PID " +
-						$"{wantedPathId}: " +
+						$"[PNG] Failed reading Texture2D PID={wantedPathId}, " +
+						$"FileID={selectedFileId}: " +
 						$"{ex.GetType().Name}: {ex.Message}");
 
 					DebugStr(
@@ -1872,6 +2248,46 @@ namespace UAFGJ
 
 					return false;
 				}
+
+				if (candidate == null ||
+					candidate.IsDummy)
+				{
+					DisplayStr(
+						$"[PNG] Texture2D PID={wantedPathId}, " +
+						$"FileID={selectedFileId} returned a null/dummy BaseField.");
+
+					return false;
+				}
+
+				assetInst =
+					targetFile;
+
+				afie =
+					targetInfo;
+
+				atvf =
+					candidate;
+
+				assetfile_name =
+					targetFile.name;
+
+				string name =
+					GetAssetName(
+						candidate);
+
+				DebugStr(
+					$"[PNG] Selected Texture2D: " +
+					$"FileID={selectedFileId}, " +
+					$"PID={targetInfo.PathId}, " +
+					$"Name='{name}', " +
+					$"TypeID={targetInfo.TypeId}, " +
+					$"File='{targetFile.name}'.");
+
+				DebugStr(
+					$"[PNG] Importing '{inputFile}' into " +
+					$"Texture2D '{name}'.");
+
+				return true;
 			}
 
 			DebugStr(

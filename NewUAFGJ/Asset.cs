@@ -12,12 +12,14 @@ namespace UAFGJ
 			string asset,
 			string input_file,
 			string specific_pathid,
+			string specific_fileid,
 			string fileKind)
 		{
 			LogPhase(
 				$"Asset-file start: asset='{asset}', " +
 				$"input='{input_file}', " +
 				$"pathId='{specific_pathid}', " +
+				$"fileId='{specific_fileid}', " +
 				$"kind='{fileKind}'.");
 
 			AssetsManager am =
@@ -26,15 +28,20 @@ namespace UAFGJ
 			AssetsFileInstance assetInst =
 				null;
 
-			string tempAssetPath =
-				asset +
-				".uafgj_stage_" +
-				Guid.NewGuid().ToString("N") +
-				".tmp";
+			string assetfile_name =
+				asset;
 
-			CleanupStaleAssetStages(asset);
-			DeleteFileIfExists(asset + "_temp");
-			DeleteFileIfExists(asset + ".uafgj_tmp");
+			string tempAssetPath =
+				null;
+
+			CleanupStaleAssetStages(
+				asset);
+
+			DeleteFileIfExists(
+				asset + "_temp");
+
+			DeleteFileIfExists(
+				asset + ".uafgj_tmp");
 
 			try
 			{
@@ -88,22 +95,26 @@ namespace UAFGJ
 				if (!isPng)
 				{
 					/*
-                     * FindTXTFile now supports:
-                     *
-                     * TypeID 49  = TextAsset
-                     * TypeID 114 = MonoBehaviour
-                     * TypeID 224 = RectTransform
-                     * TypeID 213 = Sprite
-                     */
+					 * FindTXTFile supports:
+					 *
+					 * TypeID 49  = TextAsset
+					 * TypeID 114 = MonoBehaviour
+					 * TypeID 224 = RectTransform
+					 * TypeID 213 = Sprite
+					 *
+					 * assetfile_name is updated to the actual
+					 * serialized file containing the selected target.
+					 */
 					if (!FindTXTFile(
 						input_file,
 						ref assetInst,
 						ref afie,
 						ref atvf,
 						ref am,
-						asset,
-						assetInst.name,
+						ref asset,
+						ref assetfile_name,
 						specific_pathid,
+						specific_fileid,
 						fileKind,
 						out rawReplacementData,
 						out originalSerializedData))
@@ -116,15 +127,20 @@ namespace UAFGJ
 				}
 				else
 				{
+					/*
+					 * FindPNGFile can also resolve an external
+					 * serialized file when FileID is specified.
+					 */
 					if (!FindPNGFile(
 						input_file,
 						ref afie,
 						ref assetInst,
 						ref atvf,
 						ref am,
-						asset,
-						assetInst.name,
+						ref asset,
+						ref assetfile_name,
 						specific_pathid,
+						specific_fileid,
 						fileKind))
 					{
 						return;
@@ -160,18 +176,90 @@ namespace UAFGJ
 				}
 
 				DebugStr(
-					"[ASSET] Import phase returned; " +
-					"validating replacement state before write.");
+					$"[ASSET] Import phase returned; " +
+					$"resolved serialized file='{assetfile_name}'.");
 
-				if (afie == null ||
-					rawReplacementData == null ||
-					rawReplacementData.Length == 0)
+				if (assetInst == null)
 				{
 					DisplayStr(
-						"Invalid replacement state.");
+						"Invalid replacement state: asset instance is null.");
 
 					return;
 				}
+
+				if (afie == null)
+				{
+					DisplayStr(
+						"Invalid replacement state: target AssetFileInfo is null.");
+
+					return;
+				}
+
+				if (rawReplacementData == null ||
+					rawReplacementData.Length == 0)
+				{
+					DisplayStr(
+						"Invalid replacement state: replacement data is empty.");
+
+					return;
+				}
+
+				if (string.IsNullOrWhiteSpace(
+					assetfile_name))
+				{
+					DisplayStr(
+						"Invalid replacement state: resolved asset file name is empty.");
+
+					return;
+				}
+
+				/*
+				 * The target file may be different from the file
+				 * originally passed on the command line when FileID
+				 * resolves an external asset.
+				 */
+				assetfile_name =
+					Path.GetFullPath(
+						assetfile_name);
+
+				DebugStr(
+					$"[ASSET] Final target serialized file: " +
+					$"'{assetfile_name}'.");
+
+				if (!File.Exists(
+					assetfile_name))
+				{
+					DisplayStr(
+						"[ASSET] Final target serialized file does not exist:");
+
+					DisplayStr(
+						assetfile_name);
+
+					return;
+				}
+
+				/*
+				 * Clean stale staging files belonging to the actual
+				 * resolved target file as well.
+				 */
+				CleanupStaleAssetStages(
+					assetfile_name);
+
+				DeleteFileIfExists(
+					assetfile_name + "_temp");
+
+				DeleteFileIfExists(
+					assetfile_name + ".uafgj_tmp");
+
+				/*
+				 * Staging file MUST belong to the actual serialized
+				 * file that contains the selected AssetFileInfo.
+				 */
+				tempAssetPath =
+					assetfile_name +
+					".uafgj_stage_" +
+					Guid.NewGuid().ToString("N") +
+					".tmp";
 
 				ushort monoId =
 					assetInst.file.GetScriptIndex(
@@ -182,21 +270,20 @@ namespace UAFGJ
 					$"{monoId} (0x{monoId:X4}) " +
 					$"for PID={afie.PathId}");
 
-				// AssetsTools.NET 3.x:
-				// attach replacement directly to AssetFileInfo.
+				/*
+				 * AssetsTools.NET 3.x:
+				 * attach replacement directly to AssetFileInfo.
+				 */
 				afie.SetNewData(
 					rawReplacementData);
 
-				string fakeName =
-					tempAssetPath;
-
 				DebugStr(
 					$"[ASSET] Writing replacement to staging file " +
-					$"'{fakeName}'.");
+					$"'{tempAssetPath}'.");
 
 				using (var stream =
 					new FileStream(
-						fakeName,
+						tempAssetPath,
 						FileMode.Create,
 						FileAccess.Write,
 						FileShare.None))
@@ -212,15 +299,35 @@ namespace UAFGJ
 					"[ASSET] Staging write completed; " +
 					"releasing AssetsManager handles.");
 
+				/*
+				 * Release all AssetsTools.NET file handles before
+				 * touching the original serialized file.
+				 */
 				am.UnloadAllAssetsFiles(
 					true);
 
 				DebugStr(
-					"[ASSET] Handles released; replacing original file.");
+					"[ASSET] AssetsManager handles released.");
+
+				/*
+				 * Give Windows a chance to release any transient
+				 * handle before ReplaceFileWithRetry starts.
+				 */
+				if (!WaitForFileUnlocked(
+					assetfile_name))
+				{
+					throw new IOException(
+						$"Destination file remains locked before replace: " +
+						$"'{assetfile_name}'.");
+				}
+
+				DebugStr(
+					"[ASSET] Destination file is unlocked; " +
+					"replacing original file.");
 
 				ReplaceFileWithRetry(
-					fakeName,
-					asset);
+					tempAssetPath,
+					assetfile_name);
 
 				DisplayStr(
 					"Successfully replaced asset!");
@@ -238,8 +345,6 @@ namespace UAFGJ
 
 				DebugStr(
 					ex.ToString());
-
-				Environment.ExitCode = 1;
 			}
 			finally
 			{
@@ -252,9 +357,69 @@ namespace UAFGJ
 				{
 				}
 
-				DeleteFileIfExists(
-					tempAssetPath);
+				if (!string.IsNullOrEmpty(
+					tempAssetPath))
+				{
+					DeleteFileIfExists(
+						tempAssetPath);
+				}
 			}
+		}
+
+
+		private static bool WaitForFileUnlocked(
+			string filePath)
+		{
+			const int maxAttempts =
+				20;
+
+			const int delayMs =
+				100;
+
+			if (!File.Exists(
+				filePath))
+			{
+				throw new FileNotFoundException(
+					"Destination file does not exist.",
+					filePath);
+			}
+
+			for (int attempt = 1;
+				 attempt <= maxAttempts;
+				 attempt++)
+			{
+				try
+				{
+					using (FileStream stream =
+						new FileStream(
+							filePath,
+							FileMode.Open,
+							FileAccess.ReadWrite,
+							FileShare.None))
+					{
+					}
+
+					return true;
+				}
+				catch (IOException)
+				{
+				}
+				catch (UnauthorizedAccessException)
+				{
+				}
+
+				if (attempt < maxAttempts)
+				{
+					DebugStr(
+						$"[SAVE] Destination still locked; " +
+						$"unlock check {attempt}/{maxAttempts - 1}...");
+
+					System.Threading.Thread.Sleep(
+						delayMs);
+				}
+			}
+
+			return false;
 		}
 
 
@@ -271,9 +436,12 @@ namespace UAFGJ
 					Path.GetFileName(
 						assetPath);
 
-				if (string.IsNullOrEmpty(directory) ||
-					string.IsNullOrEmpty(fileName) ||
-					!Directory.Exists(directory))
+				if (string.IsNullOrEmpty(
+					directory) ||
+					string.IsNullOrEmpty(
+					fileName) ||
+					!Directory.Exists(
+					directory))
 				{
 					return;
 				}
@@ -300,6 +468,8 @@ namespace UAFGJ
 					ex.Message);
 			}
 		}
+
+
 		private static void DebugRawVsBaseFieldSprite(
 			AssetsFileInstance assetInst,
 			AssetFileInfo afie,
@@ -334,8 +504,8 @@ namespace UAFGJ
 					baseField.WriteToByteArray();
 
 				DebugFindFloatPatterns(
-				"SPRITE BASEFIELD",
-				baseFieldData);
+					"SPRITE BASEFIELD",
+					baseFieldData);
 
 				DebugPayloadWindow(
 					"ORIGINAL textureRect",
@@ -391,10 +561,6 @@ namespace UAFGJ
 						"[SPRITE] RAW asset and BaseField serialization are byte-identical.");
 				}
 
-				// ========================================================
-				// FIRST 64 RAW BYTES
-				// ========================================================
-
 				int rawPreviewLength =
 					Math.Min(
 						64,
@@ -409,10 +575,6 @@ namespace UAFGJ
 							0,
 							rawPreviewLength));
 				}
-
-				// ========================================================
-				// FIRST 64 BASEFIELD BYTES
-				// ========================================================
 
 				int basePreviewLength =
 					Math.Min(
@@ -439,6 +601,5 @@ namespace UAFGJ
 					ex.ToString());
 			}
 		}
-
 	}
 }

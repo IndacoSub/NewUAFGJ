@@ -99,18 +99,25 @@ namespace UAFGJ
 
 				if (args.Length < 2)
 				{
-					DisplayStr("Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId]");
+					DisplayStr("Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId] [fileId] [fileKind]");
 					return;
 				}
 
 				string assetOrBundle = args[0].Replace('\\', '/');
 				string inputFile = args[1].Replace('\\', '/');
 				string pathId = args.Length >= 3 ? args[2].Trim() : string.Empty;
-				string fileKind = args.Length >= 4 ? args[3].Trim() : string.Empty;
+				string fileId = args.Length >= 4 ? args[3].Trim() : string.Empty;
+				string fileKind = args.Length >= 5 ? args[4].Trim() : string.Empty;
+
+				if (fileId == "-")
+				{
+					fileId = string.Empty;
+				}
 
 				DebugStr($"[BOOT] Input path='{assetOrBundle}'");
 				DebugStr($"[BOOT] Replacement path='{inputFile}'");
 				DebugStr($"[BOOT] PathID='{pathId}'");
+				DebugStr($"[BOOT] FileID='{fileId}'");
 				DebugStr($"[BOOT] FileKind='{fileKind}'");
 
 				if (!File.Exists(assetOrBundle))
@@ -136,15 +143,18 @@ namespace UAFGJ
 					DisplayStr("Requested path ID: " + pathId);
 				}
 
+				if (!string.IsNullOrWhiteSpace(fileId))
+				{
+					DisplayStr("Requested file ID: " + fileId);
+				}
+
 				if (!string.IsNullOrWhiteSpace(fileKind))
 				{
 					DisplayStr("File kind: " + fileKind);
 				}
 
 				DebugStr("[BOOT] Entering DoStuff().");
-
-				DoStuff(assetOrBundle, inputFile, pathId, fileKind);
-
+				DoStuff(assetOrBundle, inputFile, pathId, fileId, fileKind);
 				DebugStr($"[BOOT] DoStuff() returned. ExitCode={Environment.ExitCode}");
 
 				if (Environment.ExitCode == 0)
@@ -226,6 +236,7 @@ namespace UAFGJ
 			string assetOrBundle,
 			string inputFile,
 			string specificPathId,
+			string specificFileId,
 			string fileKind)
 		{
 			DebugStr("[PHASE] DoStuff: starting file detection.");
@@ -260,6 +271,7 @@ namespace UAFGJ
 						assetOrBundle,
 						inputFile,
 						specificPathId,
+						specificFileId,
 						fileKind);
 
 					break;
@@ -271,6 +283,7 @@ namespace UAFGJ
 						assetOrBundle,
 						inputFile,
 						specificPathId,
+						specificFileId,
 						fileKind);
 
 					break;
