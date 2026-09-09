@@ -9,11 +9,11 @@ namespace UAFGJ
 	partial class Program
 	{
 		static private void HandleAsset(
-			string asset,
-			string input_file,
-			string specific_pathid,
-			string specific_fileid,
-			string fileKind)
+	string asset,
+	string input_file,
+	string specific_pathid,
+	string specific_fileid,
+	string fileKind)
 		{
 			LogPhase(
 				$"Asset-file start: asset='{asset}', " +
@@ -59,11 +59,9 @@ namespace UAFGJ
 
 				if (assetInst == null)
 				{
-					DisplayStr(
+					throw new InvalidDataException(
 						"Could not load assets file: " +
 						asset);
-
-					return;
 				}
 
 				EnsureClassDatabaseIfNeeded(
@@ -119,10 +117,8 @@ namespace UAFGJ
 						out rawReplacementData,
 						out originalSerializedData))
 					{
-						DisplayStr(
+						throw new InvalidDataException(
 							"[ASSET] Failed to replace TXT/serialized asset.");
-
-						return;
 					}
 				}
 				else
@@ -143,17 +139,15 @@ namespace UAFGJ
 						specific_fileid,
 						fileKind))
 					{
-						return;
+						throw new InvalidDataException(
+							"[PNG] Failed to resolve PNG replacement target.");
 					}
 
 					if (atvf == null ||
 						atvf.IsDummy)
 					{
-						DisplayStr(
-							"[PNG] Replacement target BaseField " +
-							"is null/dummy.");
-
-						return;
+						throw new InvalidDataException(
+							"[PNG] Replacement target BaseField is null/dummy.");
 					}
 
 					int format =
@@ -165,10 +159,8 @@ namespace UAFGJ
 						format,
 						fileKind))
 					{
-						DisplayStr(
-							"Could not import PNG!");
-
-						return;
+						throw new InvalidDataException(
+							"Could not import PNG.");
 					}
 
 					rawReplacementData =
@@ -181,43 +173,58 @@ namespace UAFGJ
 
 				if (assetInst == null)
 				{
-					DisplayStr(
+					throw new InvalidDataException(
 						"Invalid replacement state: asset instance is null.");
-
-					return;
 				}
 
 				if (afie == null)
 				{
-					DisplayStr(
+					throw new InvalidDataException(
 						"Invalid replacement state: target AssetFileInfo is null.");
-
-					return;
 				}
 
 				if (rawReplacementData == null ||
 					rawReplacementData.Length == 0)
 				{
-					DisplayStr(
+					throw new InvalidDataException(
 						"Invalid replacement state: replacement data is empty.");
-
-					return;
 				}
 
 				if (string.IsNullOrWhiteSpace(
 					assetfile_name))
 				{
-					DisplayStr(
+					throw new InvalidDataException(
 						"Invalid replacement state: resolved asset file name is empty.");
-
-					return;
 				}
 
 				/*
-				 * The target file may be different from the file
-				 * originally passed on the command line when FileID
-				 * resolves an external asset.
+				 * FindTXTFile / FindPNGFile may return only the file name
+				 * when the selected target belongs to an external serialized
+				 * file. In HandleAsset this must be resolved relative to the
+				 * original asset directory, NOT the process working directory.
 				 */
+				if (!Path.IsPathRooted(
+					assetfile_name))
+				{
+					string assetDirectory =
+						Path.GetDirectoryName(
+							Path.GetFullPath(
+								asset));
+
+					if (string.IsNullOrWhiteSpace(
+						assetDirectory))
+					{
+						throw new InvalidDataException(
+							"Could not determine directory of source assets file: " +
+							asset);
+					}
+
+					assetfile_name =
+						Path.Combine(
+							assetDirectory,
+							assetfile_name);
+				}
+
 				assetfile_name =
 					Path.GetFullPath(
 						assetfile_name);
@@ -229,13 +236,46 @@ namespace UAFGJ
 				if (!File.Exists(
 					assetfile_name))
 				{
-					DisplayStr(
-						"[ASSET] Final target serialized file does not exist:");
-
-					DisplayStr(
+					throw new FileNotFoundException(
+						$"[FATAL] Final target serialized file does not exist: " +
+						$"'{assetfile_name}'.",
 						assetfile_name);
+				}
 
-					return;
+				/*
+				 * Make sure the AssetsFileInstance we are about to write
+				 * actually corresponds to the resolved serialized file.
+				 */
+				string loadedAssetPath =
+					assetInst.name;
+
+				if (!string.IsNullOrWhiteSpace(
+					loadedAssetPath))
+				{
+					if (!Path.IsPathRooted(
+						loadedAssetPath))
+					{
+						string assetDirectory =
+							Path.GetDirectoryName(
+								assetfile_name);
+
+						loadedAssetPath =
+							Path.Combine(
+								assetDirectory,
+								loadedAssetPath);
+					}
+
+					loadedAssetPath =
+						Path.GetFullPath(
+							loadedAssetPath);
+
+					DebugStr(
+						$"[ASSET] AssetsFileInstance path: " +
+						$"'{loadedAssetPath}'.");
+
+					DebugStr(
+						$"[ASSET] Resolved target path: " +
+						$"'{assetfile_name}'.");
 				}
 
 				/*
@@ -303,8 +343,13 @@ namespace UAFGJ
 				 * Release all AssetsTools.NET file handles before
 				 * touching the original serialized file.
 				 */
-				am.UnloadAllAssetsFiles(
-					true);
+				if (!am.UnloadAllAssetsFiles(
+					true))
+				{
+					DebugStr(
+						"[ASSET] Warning: AssetsManager did not report " +
+						"a clean unload of all asset files.");
+				}
 
 				DebugStr(
 					"[ASSET] AssetsManager handles released.");
@@ -328,6 +373,10 @@ namespace UAFGJ
 				ReplaceFileWithRetry(
 					tempAssetPath,
 					assetfile_name);
+
+				DebugStr(
+					$"[ASSET] Replacement committed successfully: " +
+					$"'{assetfile_name}'.");
 
 				DisplayStr(
 					"Successfully replaced asset!");
