@@ -10,8 +10,6 @@ The updated project was created as part of an **amateur, personal translation pr
 
 This is an **unofficial fan translation**. It is **not official, sponsored, endorsed, authorized, or affiliated** in any way with the developers, publishers, or rights holders of Tokyo Psychodemic.
 
-There are currently **no plans to publicly release the translation**.
-
 NewUAFGJ itself is a development and automation tool used to assist with the processing of locally stored game assets.
 
 > **AI USAGE DISCLAIMER**
