@@ -12,7 +12,15 @@ namespace UAFGJ;
 
 partial class Program
 {
-    private static bool ImportTexturesCustom(
+	private static readonly int[] Bc7Weights4 =
+    {
+	    0, 4, 9, 13,
+	    17, 21, 26, 30,
+	    34, 38, 43, 47,
+	    51, 55, 60, 64
+    };
+
+	private static bool ImportTexturesCustom(
         ref AssetTypeValueField atvf,
         string png,
         int format,
@@ -106,7 +114,20 @@ partial class Program
 
                 break;
 
-            default:
+			case TextureFormat.BC7:
+
+				encoded =
+					ImportBC7Texture(
+						png,
+						shouldResize,
+						originalWidth,
+						originalHeight,
+						out width,
+						out height);
+
+				break;
+
+			default:
 
                 encoded =
                     ImportTextureWithAssetsTools(
@@ -1439,12 +1460,842 @@ partial class Program
             (byte)((indices >> 40) & 0xFF);
     }
 
+	// ================================================================
+	// BC7 / MODE 6
+	//
+	// Encoder BC7 completamente managed.
+	// Nessuna dipendenza esterna aggiuntiva.
+	//
+	// Mode 6:
+	//   - 1 subset
+	//   - RGBA combinato
+	//   - endpoint RGBAP 7.7.7.7.1
+	//   - 16 indici da 4 bit
+	//   - indice 0 con 3 bit effettivi (fix-up bit implicito)
+	//
+	// Layout:
+	//   mode      = 7 bits
+	//   R0/R1     = 7 + 7
+	//   G0/G1     = 7 + 7
+	//   B0/B1     = 7 + 7
+	//   A0/A1     = 7 + 7
+	//   P0/P1     = 1 + 1
+	//   indices   = 3 + 15*4
+	//
+	// Totale = 128 bit = 16 byte.
+	// ================================================================
 
-    // ================================================================
-    // RGB565
-    // ================================================================
+	private static byte[] ImportBC7Texture(
+		string file,
+		bool resize,
+		int originalWidth,
+		int originalHeight,
+		out int width,
+		out int height)
+	{
+		using Image<Rgba32> image =
+			Image.Load<Rgba32>(file);
 
-    private static ushort PackRgb565(
+		width =
+			image.Width;
+
+		height =
+			image.Height;
+
+		if (resize &&
+			originalWidth > 0 &&
+			originalHeight > 0 &&
+			(originalWidth != width ||
+			 originalHeight != height))
+		{
+			image.Mutate(x =>
+				x.Resize(
+					originalWidth,
+					originalHeight));
+
+			width =
+				originalWidth;
+
+			height =
+				originalHeight;
+		}
+
+		/*
+		 * Mantiene lo stesso orientamento usato dagli
+		 * encoder DXT1/DXT5 esistenti.
+		 */
+		image.Mutate(x =>
+			x.Flip(
+				FlipMode.Vertical));
+
+		byte[] rgba =
+			new byte[
+				checked(
+					width *
+					height *
+					4)];
+
+		image.CopyPixelDataTo(
+			rgba);
+
+		DisplayStr(
+			$"[BC7] Encoding " +
+			$"{width}x{height} " +
+			$"RGBA32 -> BC7 Mode 6 " +
+			$"(managed, no external encoder)...");
+
+		byte[] encoded =
+			EncodeBC7Mode6(
+				rgba,
+				width,
+				height);
+
+		int blocksX =
+			(width + 3) / 4;
+
+		int blocksY =
+			(height + 3) / 4;
+
+		int expectedSize =
+			checked(
+				blocksX *
+				blocksY *
+				16);
+
+		if (encoded == null ||
+			encoded.Length != expectedSize)
+		{
+			throw new InvalidDataException(
+				$"BC7 encoder generated " +
+				$"{encoded?.Length ?? 0} bytes, " +
+				$"expected {expectedSize}.");
+		}
+
+		DisplayStr(
+			$"[BC7] Encoded successfully: " +
+			$"{encoded.Length:N0} bytes " +
+			$"({blocksX}x{blocksY} blocks, " +
+			$"Mode 6).");
+
+		return encoded;
+	}
+
+
+	// ================================================================
+	// BC7 MODE 6 ENCODER
+	// ================================================================
+
+	private static byte[] EncodeBC7Mode6(
+		byte[] rgba,
+		int width,
+		int height)
+	{
+		if (rgba == null)
+			throw new ArgumentNullException(
+				nameof(rgba));
+
+		if (width <= 0 ||
+			height <= 0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(width),
+				"Texture dimensions must be positive.");
+		}
+
+		int requiredBytes =
+			checked(
+				width *
+				height *
+				4);
+
+		if (rgba.Length < requiredBytes)
+		{
+			throw new ArgumentException(
+				"RGBA buffer is smaller than " +
+				"width*height*4.",
+				nameof(rgba));
+		}
+
+		int blocksX =
+			(width + 3) / 4;
+
+		int blocksY =
+			(height + 3) / 4;
+
+		byte[] output =
+			new byte[
+				checked(
+					blocksX *
+					blocksY *
+					16)];
+
+		int outputOffset =
+			0;
+
+		for (int by = 0;
+			 by < blocksY;
+			 by++)
+		{
+			for (int bx = 0;
+				 bx < blocksX;
+				 bx++)
+			{
+				EncodeBC7Mode6Block(
+					rgba,
+					width,
+					height,
+					bx * 4,
+					by * 4,
+					output,
+					outputOffset);
+
+				outputOffset +=
+					16;
+			}
+		}
+
+		return output;
+	}
+
+
+	// ================================================================
+	// BC7 MODE 6 BLOCK
+	// ================================================================
+
+	private static void EncodeBC7Mode6Block(
+		byte[] rgba,
+		int width,
+		int height,
+		int startX,
+		int startY,
+		byte[] output,
+		int outputOffset)
+	{
+		Span<byte> r =
+			stackalloc byte[16];
+
+		Span<byte> g =
+			stackalloc byte[16];
+
+		Span<byte> b =
+			stackalloc byte[16];
+
+		Span<byte> a =
+			stackalloc byte[16];
+
+		/*
+		 * BC7/DXT-style edge handling:
+		 * pixels outside the texture repeat the last valid pixel.
+		 */
+		for (int py = 0;
+			 py < 4;
+			 py++)
+		{
+			int sourceY =
+				Math.Min(
+					startY + py,
+					height - 1);
+
+			for (int px = 0;
+				 px < 4;
+				 px++)
+			{
+				int sourceX =
+					Math.Min(
+						startX + px,
+						width - 1);
+
+				int sourceOffset =
+					checked(
+						(sourceY * width +
+						 sourceX) * 4);
+
+				int index =
+					py * 4 + px;
+
+				r[index] =
+					rgba[sourceOffset + 0];
+
+				g[index] =
+					rgba[sourceOffset + 1];
+
+				b[index] =
+					rgba[sourceOffset + 2];
+
+				a[index] =
+					rgba[sourceOffset + 3];
+			}
+		}
+
+		/*
+		 * ------------------------------------------------------------
+		 * Initial endpoints
+		 *
+		 * Mode 6 has one endpoint pair.
+		 * We use the per-channel bounding box:
+		 *
+		 * endpoint 0 = minima
+		 * endpoint 1 = maxima
+		 *
+		 * This is intentionally simple and deterministic.
+		 * ------------------------------------------------------------
+		 */
+
+		int minR = 255;
+		int minG = 255;
+		int minB = 255;
+		int minA = 255;
+
+		int maxR = 0;
+		int maxG = 0;
+		int maxB = 0;
+		int maxA = 0;
+
+		for (int i = 0;
+			 i < 16;
+			 i++)
+		{
+			if (r[i] < minR)
+				minR = r[i];
+
+			if (g[i] < minG)
+				minG = g[i];
+
+			if (b[i] < minB)
+				minB = b[i];
+
+			if (a[i] < minA)
+				minA = a[i];
+
+			if (r[i] > maxR)
+				maxR = r[i];
+
+			if (g[i] > maxG)
+				maxG = g[i];
+
+			if (b[i] > maxB)
+				maxB = b[i];
+
+			if (a[i] > maxA)
+				maxA = a[i];
+		}
+
+		Bc7Endpoint endpoint0 =
+			QuantizeBC7Endpoint(
+				minR,
+				minG,
+				minB,
+				minA);
+
+		Bc7Endpoint endpoint1 =
+			QuantizeBC7Endpoint(
+				maxR,
+				maxG,
+				maxB,
+				maxA);
+
+		/*
+		 * ------------------------------------------------------------
+		 * Find best 4-bit index for every pixel.
+		 * ------------------------------------------------------------
+		 */
+
+		Span<byte> indices =
+			stackalloc byte[16];
+
+		for (int i = 0;
+			 i < 16;
+			 i++)
+		{
+			int bestIndex =
+				0;
+
+			int bestError =
+				int.MaxValue;
+
+			for (int index = 0;
+				 index < 16;
+				 index++)
+			{
+				GetBC7InterpolatedColor(
+					endpoint0,
+					endpoint1,
+					index,
+					out int pr,
+					out int pg,
+					out int pb,
+					out int pa);
+
+				int dr =
+					r[i] - pr;
+
+				int dg =
+					g[i] - pg;
+
+				int db =
+					b[i] - pb;
+
+				int da =
+					a[i] - pa;
+
+				/*
+				 * Alpha ha lo stesso peso di RGB.
+				 * Il calcolo rimane ampiamente entro int.
+				 */
+				int error =
+					checked(
+						dr * dr +
+						dg * dg +
+						db * db +
+						da * da);
+
+				if (error < bestError)
+				{
+					bestError =
+						error;
+
+					bestIndex =
+						index;
+				}
+			}
+
+			indices[i] =
+				(byte)bestIndex;
+		}
+
+		/*
+		 * ------------------------------------------------------------
+		 * BC7 Mode 6 fix-up
+		 *
+		 * L'indice del texel 0 deve avere MSB = 0.
+		 * Con indici a 4 bit significa:
+		 *
+		 *     index[0] <= 7
+		 *
+		 * Se non lo è, invertiamo endpoint e indici:
+		 *
+		 *     index' = 15 - index
+		 *
+		 * mantenendo identica la palette.
+		 * ------------------------------------------------------------
+		 */
+
+		if (indices[0] >= 8)
+		{
+			(endpoint0, endpoint1) =
+				(endpoint1, endpoint0);
+
+			for (int i = 0;
+				 i < 16;
+				 i++)
+			{
+				indices[i] =
+					(byte)(15 - indices[i]);
+			}
+		}
+
+		/*
+		 * ------------------------------------------------------------
+		 * Serialize 128-bit BC7 block.
+		 *
+		 * BC7 uses an LSB-first bitstream.
+		 * ------------------------------------------------------------
+		 */
+
+		Span<byte> block =
+			output.AsSpan(
+				outputOffset,
+				16);
+
+		block.Clear();
+
+		int bitOffset =
+			0;
+
+		/*
+		 * Mode 6:
+		 *
+		 * 0000001 if viewed MSB-first,
+		 * therefore numerical bit pattern = 1 << 6.
+		 */
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			1u << 6,
+			7);
+
+		/*
+		 * Endpoint channel order is:
+		 *
+		 * R0 R1
+		 * G0 G1
+		 * B0 B1
+		 * A0 A1
+		 */
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint0.R7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint1.R7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint0.G7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint1.G7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint0.B7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint1.B7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint0.A7,
+			7);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint1.A7,
+			7);
+
+		/*
+		 * Unique P-bit per endpoint.
+		 */
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint0.P,
+			1);
+
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			(uint)endpoint1.P,
+			1);
+
+		/*
+		 * Fix-up index 0:
+		 * only the lower 3 bits are physically stored.
+		 */
+		WriteBC7Bits(
+			block,
+			ref bitOffset,
+			indices[0],
+			3);
+
+		/*
+		 * Remaining indices:
+		 * full 4 bits.
+		 */
+		for (int i = 1;
+			 i < 16;
+			 i++)
+		{
+			WriteBC7Bits(
+				block,
+				ref bitOffset,
+				indices[i],
+				4);
+		}
+
+		if (bitOffset != 128)
+		{
+			throw new InvalidDataException(
+				$"BC7 Mode 6 serializer produced " +
+				$"{bitOffset} bits instead of 128.");
+		}
+	}
+
+
+	// ================================================================
+	// BC7 ENDPOINT
+	// ================================================================
+
+	private struct Bc7Endpoint
+	{
+		public int R7;
+		public int G7;
+		public int B7;
+		public int A7;
+		public int P;
+
+		public int R;
+		public int G;
+		public int B;
+		public int A;
+	}
+
+
+	// ================================================================
+	// BC7 ENDPOINT QUANTIZATION
+	// ================================================================
+	//
+	// Mode 6 stores 7 bits + one P-bit for each endpoint.
+	//
+	// Reconstructed 8-bit component:
+	//
+	//     reconstructed = (stored7 << 1) | P
+	//
+	// The P-bit is shared by R/G/B/A of the same endpoint,
+	// so we test both possible P values and choose the one with
+	// the smallest total endpoint error.
+	// ================================================================
+
+	private static Bc7Endpoint QuantizeBC7Endpoint(
+		int r,
+		int g,
+		int b,
+		int a)
+	{
+		long bestError =
+			long.MaxValue;
+
+		Bc7Endpoint best =
+			default;
+
+		for (int p = 0;
+			 p <= 1;
+			 p++)
+		{
+			int r7 =
+				QuantizeBC7Component(
+					r,
+					p);
+
+			int g7 =
+				QuantizeBC7Component(
+					g,
+					p);
+
+			int b7 =
+				QuantizeBC7Component(
+					b,
+					p);
+
+			int a7 =
+				QuantizeBC7Component(
+					a,
+					p);
+
+			int rr =
+				(r7 << 1) | p;
+
+			int gg =
+				(g7 << 1) | p;
+
+			int bb =
+				(b7 << 1) | p;
+
+			int aa =
+				(a7 << 1) | p;
+
+			long dr =
+				r - rr;
+
+			long dg =
+				g - gg;
+
+			long db =
+				b - bb;
+
+			long da =
+				a - aa;
+
+			long error =
+				dr * dr +
+				dg * dg +
+				db * db +
+				da * da;
+
+			if (error < bestError)
+			{
+				bestError =
+					error;
+
+				best.R7 =
+					r7;
+
+				best.G7 =
+					g7;
+
+				best.B7 =
+					b7;
+
+				best.A7 =
+					a7;
+
+				best.P =
+					p;
+
+				best.R =
+					rr;
+
+				best.G =
+					gg;
+
+				best.B =
+					bb;
+
+				best.A =
+					aa;
+			}
+		}
+
+		return best;
+	}
+
+
+	private static int QuantizeBC7Component(
+		int value,
+		int p)
+	{
+		/*
+		 * Nearest value in:
+		 *
+		 *     (7-bit << 1) | p
+		 *
+		 * We use integer arithmetic to avoid floating point
+		 * differences.
+		 */
+		int q =
+			(value - p + 1) / 2;
+
+		if (q < 0)
+			q = 0;
+
+		if (q > 127)
+			q = 127;
+
+		return q;
+	}
+
+
+	// ================================================================
+	// BC7 INTERPOLATION
+	// ================================================================
+
+	private static void GetBC7InterpolatedColor(
+		Bc7Endpoint endpoint0,
+		Bc7Endpoint endpoint1,
+		int index,
+		out int r,
+		out int g,
+		out int b,
+		out int a)
+	{
+		/*
+		 * BC7 4-bit interpolation weights.
+		 *
+		 * Index:
+		 *  0  1  2  3  4  5  6  7
+		 *  8  9 10 11 12 13 14 15
+		 */
+
+		int w =
+			Bc7Weights4[index];
+
+		r =
+			((64 - w) * endpoint0.R +
+			 w * endpoint1.R +
+			 32) >> 6;
+
+		g =
+			((64 - w) * endpoint0.G +
+			 w * endpoint1.G +
+			 32) >> 6;
+
+		b =
+			((64 - w) * endpoint0.B +
+			 w * endpoint1.B +
+			 32) >> 6;
+
+		a =
+			((64 - w) * endpoint0.A +
+			 w * endpoint1.A +
+			 32) >> 6;
+	}
+
+
+	// ================================================================
+	// BC7 BIT WRITER
+	// ================================================================
+
+	private static void WriteBC7Bits(
+		Span<byte> buffer,
+		ref int bitOffset,
+		uint value,
+		int bitCount)
+	{
+		if (bitCount < 1 ||
+			bitCount > 32)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(bitCount));
+		}
+
+		if (bitOffset < 0 ||
+			bitOffset + bitCount >
+			buffer.Length * 8)
+		{
+			throw new InvalidDataException(
+				$"BC7 bit write outside block: " +
+				$"offset={bitOffset}, " +
+				$"count={bitCount}.");
+		}
+
+		for (int i = 0;
+			 i < bitCount;
+			 i++)
+		{
+			if (((value >> i) & 1u) != 0)
+			{
+				int targetBit =
+					bitOffset + i;
+
+				int byteIndex =
+					targetBit >> 3;
+
+				int bitInByte =
+					targetBit & 7;
+
+				buffer[byteIndex] |=
+					(byte)(1 << bitInByte);
+			}
+		}
+
+		bitOffset +=
+			bitCount;
+	}
+
+
+	// ================================================================
+	// RGB565
+	// ================================================================
+
+	private static ushort PackRgb565(
         int r,
         int g,
         int b)
