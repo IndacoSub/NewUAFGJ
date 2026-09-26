@@ -1,4 +1,4 @@
-using AssetsTools.NET.Extra;
+﻿using AssetsTools.NET.Extra;
 using AssetsTools.NET;
 using System;
 using System.IO;
@@ -42,6 +42,15 @@ namespace UAFGJ
 
 			DeleteFileIfExists(
 				asset + ".uafgj_tmp");
+			if (IsVideoClipAsResourceKind(fileKind))
+			{
+				DisplayStr(
+					"[VIDEO] VIDEOCLIP_AS_RESOURCE requires an AssetBundle " +
+					"because the VideoClip references an external .resource entry.");
+
+				Environment.ExitCode = 1;
+				return;
+			}
 
 			try
 			{

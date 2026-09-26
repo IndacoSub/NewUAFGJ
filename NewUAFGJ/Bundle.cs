@@ -1,4 +1,4 @@
-using AssetsTools.NET.Extra;
+﻿using AssetsTools.NET.Extra;
 using AssetsTools.NET;
 using System;
 using System.Collections.Generic;
@@ -381,8 +381,12 @@ namespace UAFGJ
 				byte[] originalTargetData =
 					null;
 
+				bool isVideoClipAsResource =
+					IsVideoClipAsResourceKind(fileKind);
+
 				bool isTextReplacement =
-					!IsPngReplacement(input_file);
+					!IsPngReplacement(input_file) &&
+					!isVideoClipAsResource;
 
 				// ====================================================
 				// IMPORT
@@ -394,7 +398,33 @@ namespace UAFGJ
 					$"pathId='{specific_pathid}', " +
 					$"fileId='{specific_fileid}'.");
 
-				if (isTextReplacement)
+				if (isVideoClipAsResource)
+				{
+					if (!FindVideoClipAsResourceFile(
+						input_file,
+						ref assetInst,
+						ref afie,
+						ref atvf,
+						ref am,
+						bundleInst,
+						ref assetfile_name,
+						specific_pathid,
+						specific_fileid,
+						fileKind,
+						out rawReplacementData,
+						out originalTargetData,
+						out string videoResourceEntryName))
+					{
+						DisplayStr(
+							"Failed to replace VideoClip + external .resource.");
+
+						return;
+					}
+
+					DebugStr(
+						$"[VIDEO] Prepared resource entry '{videoResourceEntryName}'.");
+				}
+				else if (isTextReplacement)
 				{
 					if (!FindTXTFile(
 						input_file,
@@ -630,6 +660,17 @@ namespace UAFGJ
 						bundleInst,
 						assetfile_name,
 						tempBundlePath);
+				}
+				else if (isVideoClipAsResource)
+				{
+					SaveAssetBundleVideoClipAsResource(
+						atvf,
+						afie,
+						assetInst,
+						bundleInst,
+						assetfile_name,
+						tempBundlePath,
+						input_file);
 				}
 				else
 				{
@@ -1841,7 +1882,21 @@ namespace UAFGJ
 				// NORMALIZE FILE KIND
 				// ====================================================
 
-				if (string.Equals(
+				if (IsVideoClipAsResourceKind(fileKind))
+				{
+					if (expectedTargetTypeId != VideoClipTypeId)
+					{
+						throw new InvalidDataException(
+							$"VIDEOCLIP_AS_RESOURCE final validation requires " +
+							$"VideoClip TypeID={VideoClipTypeId}, " +
+							$"but received TypeID={expectedTargetTypeId}.");
+					}
+
+					DebugStr(
+						$"[CHECK] Final validation kind='VIDEOCLIP_AS_RESOURCE' " +
+						$"for VideoClip TypeID={expectedTargetTypeId}.");
+				}
+				else if (string.Equals(
 					fileKind,
 					"PNG",
 					StringComparison.OrdinalIgnoreCase))
@@ -2649,6 +2704,27 @@ namespace UAFGJ
 						$"MonoBehaviour (114), " +
 						$"RectTransform (224), " +
 						$"Sprite (213).");
+				}
+
+				// ====================================================
+				// VIDEOCLIP AS RESOURCE
+				// ====================================================
+
+				if (IsVideoClipAsResourceKind(fileKind))
+				{
+					ValidateVideoClipAsResourceFinal(
+						am,
+						bundle,
+						inst,
+						targetInfo,
+						targetField,
+						dumpPath);
+
+					DebugStr(
+						"[CHECK] VIDEOCLIP_AS_RESOURCE: " +
+						"VideoClip + raw .resource validation PASSED.");
+
+					return;
 				}
 
 				// ====================================================
