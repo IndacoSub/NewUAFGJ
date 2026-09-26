@@ -34,6 +34,14 @@ namespace UAFGJ
             out byte[] originalSerializedData,
             out string resourceEntryName)
         {
+			DebugStr(
+	        $"[VIDEO][ARGS] " +
+	        $"inputFile='{inputFile}', " +
+	        $"specificPathId='{specificPathId}', " +
+	        $"specificFileId='{specificFileId}', " +
+	        $"fileKind='{fileKind}', " +
+	        $"assetfile_name='{assetfile_name}'");
+			
             rawReplacementData = Array.Empty<byte>();
             originalSerializedData = Array.Empty<byte>();
             resourceEntryName = string.Empty;

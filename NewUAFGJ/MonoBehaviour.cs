@@ -84,15 +84,15 @@ namespace UAFGJ
 
             if (assetInst == null)
                 throw new InvalidOperationException(
-                    "assetInst is null.");
+					"[FATAL] assetInst is null.");
 
             if (afie == null)
                 throw new InvalidOperationException(
-                    "AssetFileInfo is null.");
+					"[FATAL] AssetFileInfo is null.");
 
             if (!File.Exists(inputFile))
                 throw new FileNotFoundException(
-                    "TXT input not found.",
+					"[FATAL] TXT input not found.",
                     inputFile);
 
             DebugStr(
@@ -122,7 +122,7 @@ namespace UAFGJ
                 originalSerializedData.Length == 0)
             {
                 throw new InvalidDataException(
-                    $"Raw asset data is empty for PID={afie.PathId}.");
+                    $"[FATAL] Raw asset data is empty for PID={afie.PathId}.");
             }
 
             DebugStr(
@@ -162,7 +162,7 @@ namespace UAFGJ
                 replacementData.Length == 0)
             {
                 throw new InvalidDataException(
-                    "Text-only replacement produced empty data.");
+					"[FATAL] Text-only replacement produced empty data.");
             }
 
             DebugStr(
@@ -267,25 +267,25 @@ namespace UAFGJ
             if (assetInst == null)
             {
                 throw new InvalidOperationException(
-                    "assetInst is null.");
+					"[FATAL] assetInst is null.");
             }
 
             if (am == null)
             {
                 throw new InvalidOperationException(
-                    "AssetsManager is null.");
+					"[FATAL] AssetsManager is null.");
             }
 
             if (afie == null)
             {
                 throw new InvalidOperationException(
-                    "AssetFileInfo is null.");
+					"[FATAL] AssetFileInfo is null.");
             }
 
             if (!File.Exists(inputFile))
             {
                 throw new FileNotFoundException(
-                    "TXT input not found.",
+					"[FATAL] TXT input not found.",
                     inputFile);
             }
 
@@ -310,7 +310,7 @@ namespace UAFGJ
                 baseField.IsDummy)
             {
                 throw new InvalidDataException(
-                    "AssetsTools.NET returned a null/dummy BaseField.");
+					"[FATAL] AssetsTools.NET returned a null/dummy BaseField.");
             }
 
             // --------------------------------------------------------
@@ -389,7 +389,7 @@ namespace UAFGJ
                 replacementData.Length == 0)
             {
                 throw new InvalidDataException(
-                    "Modified MonoBehaviour serialized to zero bytes.");
+					"[FATAL] Modified MonoBehaviour serialized to zero bytes.");
             }
 
             DebugStr(
@@ -491,7 +491,7 @@ namespace UAFGJ
             }
 
             throw new InvalidDataException(
-                $"Dump does not contain " +
+                $"[FATAL] Dump does not contain " +
                 $"a string field named '{wantedFieldName}'.");
         }
 
@@ -558,7 +558,7 @@ namespace UAFGJ
                 catch (Exception ex)
                 {
                     throw new InvalidDataException(
-                        $"Unable to apply FULL field #{i + 1}: " +
+                        $"[FATAL] Unable to apply FULL field #{i + 1}: " +
                         $"path='{match.Dump.Path}', line={match.Dump.LineNumber}.",
                         ex);
                 }
@@ -594,21 +594,21 @@ namespace UAFGJ
             if (absoluteOffset < 0)
             {
                 throw new InvalidDataException(
-                    $"Invalid absolute asset offset " +
+                    $"[FATAL] Invalid absolute asset offset " +
                     $"for PID={afie.PathId}: {absoluteOffset}");
             }
 
             if (byteSize <= 0)
             {
                 throw new InvalidDataException(
-                    $"Invalid asset byte size " +
+                    $"[FATAL] Invalid asset byte size " +
                     $"for PID={afie.PathId}: {byteSize}");
             }
 
             if (byteSize > int.MaxValue)
             {
                 throw new InvalidDataException(
-                    $"Asset PID={afie.PathId} is too large " +
+                    $"[FATAL] Asset PID={afie.PathId} is too large " +
                     $"to load into a byte array: {byteSize} bytes.");
             }
 
@@ -630,7 +630,7 @@ namespace UAFGJ
                 if (data.Length != byteSize)
                 {
                     throw new InvalidDataException(
-                        $"Could not read complete raw asset " +
+                        $"[FATAL] Could not read complete raw asset " +
                         $"PID={afie.PathId}: " +
                         $"expected={byteSize}, " +
                         $"actual={data.Length}");
@@ -651,7 +651,7 @@ namespace UAFGJ
             if (!File.Exists(inputFile))
             {
                 throw new FileNotFoundException(
-                    "TXT dump not found.",
+					"[FATAL] TXT dump not found.",
                     inputFile);
             }
 
@@ -696,7 +696,7 @@ namespace UAFGJ
                     if (found != null)
                     {
                         throw new InvalidDataException(
-                            "Dump contains multiple m_text fields.");
+							"[FATAL] Dump contains multiple m_text fields.");
                     }
 
                     const string prefix =
@@ -720,7 +720,7 @@ namespace UAFGJ
             if (found == null)
             {
                 throw new InvalidDataException(
-                    "The TXT dump does not contain " +
+					"[FATAL] The TXT dump does not contain " +
                     "'1 string m_text = ...'.");
             }
 
@@ -735,7 +735,7 @@ namespace UAFGJ
                 source.Length < 4)
             {
                 throw new InvalidDataException(
-                    "Source asset data is too small.");
+					"[FATAL] Source asset data is too small.");
             }
 
             replacement ??= "";
@@ -831,7 +831,7 @@ namespace UAFGJ
             if (candidates.Count == 0)
             {
                 throw new InvalidDataException(
-                    "Could not find any plausible serialized " +
+					"[FATAL] Could not find any plausible serialized " +
                     "UTF-8 string inside the target MonoBehaviour.");
             }
 

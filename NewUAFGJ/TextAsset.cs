@@ -16,11 +16,11 @@ partial class Program
         string assetName)
     {
         if (!File.Exists(inputFile))
-            throw new FileNotFoundException("Text input file not found.", inputFile);
+            throw new FileNotFoundException("[FATAL] Text input file not found.", inputFile);
 
         AssetTypeValueField baseField = am.GetBaseField(assetInst, afie);
         if (baseField == null || baseField.IsDummy)
-            throw new InvalidDataException("TextAsset BaseField is unavailable.");
+            throw new InvalidDataException("[FATAL] TextAsset BaseField is unavailable.");
 
         byte[] data = File.ReadAllBytes(inputFile);
         baseField["m_Name"].AsString = Path.GetFileNameWithoutExtension(inputFile);

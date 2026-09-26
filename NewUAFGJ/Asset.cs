@@ -69,7 +69,7 @@ namespace UAFGJ
 				if (assetInst == null)
 				{
 					throw new InvalidDataException(
-						"Could not load assets file: " +
+						"[FATAL] Could not load assets file: " +
 						asset);
 				}
 
@@ -126,8 +126,9 @@ namespace UAFGJ
 						out rawReplacementData,
 						out originalSerializedData))
 					{
+						Environment.ExitCode = 1;
 						throw new InvalidDataException(
-							"[ASSET] Failed to replace TXT/serialized asset.");
+							"[FATAL] Failed to replace TXT/serialized asset.");
 					}
 				}
 				else
@@ -149,14 +150,14 @@ namespace UAFGJ
 						fileKind))
 					{
 						throw new InvalidDataException(
-							"[PNG] Failed to resolve PNG replacement target.");
+							"[FATAL] Failed to resolve PNG replacement target.");
 					}
 
 					if (atvf == null ||
 						atvf.IsDummy)
 					{
 						throw new InvalidDataException(
-							"[PNG] Replacement target BaseField is null/dummy.");
+							"[FATAL] Replacement target BaseField is null/dummy.");
 					}
 
 					int format =
@@ -169,7 +170,7 @@ namespace UAFGJ
 						fileKind))
 					{
 						throw new InvalidDataException(
-							"Could not import PNG.");
+							"[FATAL] Could not import PNG.");
 					}
 
 					rawReplacementData =
@@ -183,27 +184,27 @@ namespace UAFGJ
 				if (assetInst == null)
 				{
 					throw new InvalidDataException(
-						"Invalid replacement state: asset instance is null.");
+						"[FATAL] Invalid replacement state: asset instance is null.");
 				}
 
 				if (afie == null)
 				{
 					throw new InvalidDataException(
-						"Invalid replacement state: target AssetFileInfo is null.");
+						"[FATAL] Invalid replacement state: target AssetFileInfo is null.");
 				}
 
 				if (rawReplacementData == null ||
 					rawReplacementData.Length == 0)
 				{
 					throw new InvalidDataException(
-						"Invalid replacement state: replacement data is empty.");
+						"[FATAL] Invalid replacement state: replacement data is empty.");
 				}
 
 				if (string.IsNullOrWhiteSpace(
 					assetfile_name))
 				{
 					throw new InvalidDataException(
-						"Invalid replacement state: resolved asset file name is empty.");
+						"[FATAL] Invalid replacement state: resolved asset file name is empty.");
 				}
 
 				/*
@@ -224,7 +225,7 @@ namespace UAFGJ
 						assetDirectory))
 					{
 						throw new InvalidDataException(
-							"Could not determine directory of source assets file: " +
+							"[FATAL] Could not determine directory of source assets file: " +
 							asset);
 					}
 
@@ -371,7 +372,7 @@ namespace UAFGJ
 					assetfile_name))
 				{
 					throw new IOException(
-						$"Destination file remains locked before replace: " +
+						$"[FATAL] Destination file remains locked before replace: " +
 						$"'{assetfile_name}'.");
 				}
 
@@ -438,7 +439,7 @@ namespace UAFGJ
 				filePath))
 			{
 				throw new FileNotFoundException(
-					"Destination file does not exist.",
+					"[FATAL] Destination file does not exist.",
 					filePath);
 			}
 

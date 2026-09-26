@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Collections.Generic;
 
 namespace UAFGJ
 {
@@ -51,6 +52,48 @@ namespace UAFGJ
 				out fileId);
 		}
 
+		private static bool AreSameResolvedAsset(
+	TargetAssetCandidate a,
+	TargetAssetCandidate b)
+		{
+			if (a == null ||
+				b == null ||
+				a.File == null ||
+				b.File == null ||
+				a.Info == null ||
+				b.Info == null)
+			{
+				return false;
+			}
+
+			// Stessa AssetsFileInstance + stesso PID + stesso TypeID.
+			if (ReferenceEquals(a.File, b.File) &&
+				a.Info.PathId == b.Info.PathId &&
+				a.Info.TypeId == b.Info.TypeId)
+			{
+				return true;
+			}
+
+			// Fallback: stesso file fisico, stesso PID e stesso TypeID.
+			string aName =
+				a.File.name ?? "";
+
+			string bName =
+				b.File.name ?? "";
+
+			if (string.Equals(
+					aName,
+					bName,
+					StringComparison.OrdinalIgnoreCase) &&
+				a.Info.PathId == b.Info.PathId &&
+				a.Info.TypeId == b.Info.TypeId)
+			{
+				return true;
+			}
+
+			return false;
+		}
+
 		private static List<TargetAssetCandidate> FindPathIdCandidates(
 	AssetsManager am,
 	AssetsFileInstance relativeTo,
@@ -60,10 +103,15 @@ namespace UAFGJ
 			List<TargetAssetCandidate> candidates =
 				new List<TargetAssetCandidate>();
 
-			if (relativeTo == null)
+			if (relativeTo == null ||
+				am == null)
 			{
 				return candidates;
 			}
+
+			// ============================================================
+			// LOCAL FILEID 0
+			// ============================================================
 
 			AssetFileInfo localInfo =
 				relativeTo.file.AssetInfos.FirstOrDefault(
@@ -82,6 +130,10 @@ namespace UAFGJ
 					});
 			}
 
+			// ============================================================
+			// EXTERNAL FILE IDS
+			// ============================================================
+
 			for (int fileId = 1;
 				 fileId <= relativeTo.file.Metadata.Externals.Count;
 				 fileId++)
@@ -95,8 +147,7 @@ namespace UAFGJ
 							pathId,
 							true);
 
-					if (
-						ext.file == null ||
+					if (ext.file == null ||
 						ext.info == null)
 					{
 						continue;
@@ -107,13 +158,44 @@ namespace UAFGJ
 						continue;
 					}
 
-					candidates.Add(
+					TargetAssetCandidate externalCandidate =
 						new TargetAssetCandidate
 						{
 							FileId = fileId,
 							File = ext.file,
 							Info = ext.info
-						});
+						};
+
+					// --------------------------------------------------------
+					// IMPORTANTISSIMO:
+					//
+					// FileID=1 può risolvere allo stesso asset fisico già
+					// trovato come FileID=0.
+					//
+					// In quel caso NON è una seconda candidate.
+					// --------------------------------------------------------
+
+					bool duplicate =
+						candidates.Any(
+							existing =>
+								AreSameResolvedAsset(
+									existing,
+									externalCandidate));
+
+					if (duplicate)
+					{
+						DebugStr(
+							$"[TARGET] Duplicate external reference ignored: " +
+							$"FileID={fileId}, " +
+							$"PID={pathId}, " +
+							$"TypeID={typeId}, " +
+							$"File='{ext.file.name}'.");
+
+						continue;
+					}
+
+					candidates.Add(
+						externalCandidate);
 				}
 				catch (Exception ex)
 				{
@@ -140,6 +222,54 @@ namespace UAFGJ
 			targetInfo = null;
 			selectedFileId = 0;
 
+			if (candidates == null)
+			{
+				candidates =
+					new List<TargetAssetCandidate>();
+			}
+
+			// ============================================================
+			// DEDUPLICATE SAFETY PASS
+			// ============================================================
+
+			List<TargetAssetCandidate> uniqueCandidates =
+				new List<TargetAssetCandidate>();
+
+			foreach (TargetAssetCandidate candidate in candidates)
+			{
+				if (candidate == null ||
+					candidate.File == null ||
+					candidate.Info == null)
+				{
+					continue;
+				}
+
+				bool duplicate =
+					uniqueCandidates.Any(
+						existing =>
+							AreSameResolvedAsset(
+								existing,
+								candidate));
+
+				if (duplicate)
+				{
+					DebugStr(
+						$"[TARGET] Duplicate candidate ignored: " +
+						$"FileID={candidate.FileId}, " +
+						$"PID={candidate.Info.PathId}, " +
+						$"TypeID={candidate.Info.TypeId}, " +
+						$"File='{candidate.File.name}'.");
+
+					continue;
+				}
+
+				uniqueCandidates.Add(
+					candidate);
+			}
+
+			candidates =
+				uniqueCandidates;
+
 			DebugStr(
 				$"[TARGET] Candidates for PID={pathId}, " +
 				$"TypeID={typeId}: {candidates.Count}");
@@ -154,6 +284,10 @@ namespace UAFGJ
 					$"File='{candidate.File.name}'");
 			}
 
+			// ============================================================
+			// NORMALIZE FILE ID
+			// ============================================================
+
 			string normalizedFileId =
 				specificFileId?.Trim() ?? "";
 
@@ -162,24 +296,33 @@ namespace UAFGJ
 				normalizedFileId = "";
 			}
 
-			bool hasFileId =
-				int.TryParse(
-					normalizedFileId,
-					out int requestedFileId);
+			bool hasExplicitFileId =
+				!string.IsNullOrWhiteSpace(
+					normalizedFileId);
 
-			if (!string.IsNullOrWhiteSpace(normalizedFileId) &&
-				!hasFileId)
+			int requestedFileId = 0;
+
+			if (hasExplicitFileId &&
+				!int.TryParse(
+					normalizedFileId,
+					out requestedFileId))
 			{
 				DisplayStr(
 					$"[TARGET] Invalid FileID '{specificFileId}'. " +
 					"Expected an integer or '-'.");
+
 				return false;
 			}
 
-			if (hasFileId)
+			// ============================================================
+			// EXPLICIT FILE ID
+			// ============================================================
+
+			if (hasExplicitFileId)
 			{
 				DebugStr(
-					$"[TARGET] Explicit FileID requested: {requestedFileId}");
+					$"[TARGET] Explicit FileID requested: " +
+					$"{requestedFileId}");
 
 				TargetAssetCandidate selected =
 					candidates.FirstOrDefault(
@@ -214,6 +357,10 @@ namespace UAFGJ
 				return true;
 			}
 
+			// ============================================================
+			// NO FILE ID
+			// ============================================================
+
 			if (candidates.Count == 0)
 			{
 				DisplayStr(
@@ -223,45 +370,49 @@ namespace UAFGJ
 				return false;
 			}
 
-			if (candidates.Count > 1)
+			if (candidates.Count == 1)
 			{
-				DisplayStr(
-					$"[FATAL] AMBIGUOUS TARGET: " +
-					$"PID={pathId}, TypeID={typeId} " +
-					$"matches {candidates.Count} assets.");
+				targetFile =
+					candidates[0].File;
 
-				DisplayStr(
-					"[TARGET] FileID is required.");
+				targetInfo =
+					candidates[0].Info;
 
-				foreach (TargetAssetCandidate candidate in candidates)
-				{
-					DisplayStr(
-						$"[TARGET]   FileID={candidate.FileId}, " +
-						$"PID={candidate.Info.PathId}, " +
-						$"TypeID={candidate.Info.TypeId}, " +
-						$"File='{candidate.File.name}'");
-				}
+				selectedFileId =
+					candidates[0].FileId;
 
-				return false;
+				DebugStr(
+					$"[TARGET] Unique target selected automatically: " +
+					$"FileID={selectedFileId}, " +
+					$"PID={pathId}, " +
+					$"TypeID={typeId}, " +
+					$"File='{targetFile.name}'");
+
+				return true;
 			}
 
-			targetFile =
-				candidates[0].File;
+			// ============================================================
+			// REAL AMBIGUITY
+			// ============================================================
 
-			targetInfo =
-				candidates[0].Info;
+			DisplayStr(
+				$"[FATAL] AMBIGUOUS TARGET: " +
+				$"PID={pathId}, TypeID={typeId} " +
+				$"matches {candidates.Count} distinct assets.");
 
-			selectedFileId =
-				candidates[0].FileId;
+			DisplayStr(
+				"[TARGET] FileID is required.");
 
-			DebugStr(
-				$"[TARGET] Unique target selected automatically: " +
-				$"FileID={selectedFileId}, " +
-				$"PID={pathId}, " +
-				$"TypeID={typeId}, " +
-				$"File='{targetFile.name}'");
+			foreach (TargetAssetCandidate candidate in candidates)
+			{
+				DisplayStr(
+					$"[TARGET]   FileID={candidate.FileId}, " +
+					$"PID={candidate.Info.PathId}, " +
+					$"TypeID={candidate.Info.TypeId}, " +
+					$"File='{candidate.File.name}'");
+			}
 
-			return true;
+			return false;
 		}
 
 		// ============================================================
@@ -301,6 +452,25 @@ namespace UAFGJ
 		// TEXTASSET IMPORT
 		// ============================================================
 
+		// ============================================================
+		// TEXTASSET IMPORT
+		//
+		// TYPEID = 49
+		//
+		// IMPORTANTE:
+		// Questo TextAsset contiene byte binari (Lua bytecode).
+		// NON usare:
+		//     File.ReadAllText()
+		//     Encoding.UTF8
+		//     AsString
+		//
+		// Usare esclusivamente:
+		//     File.ReadAllBytes()
+		//     m_Script.AsByteArray
+		//
+		// m_Name viene PRESERVATO.
+		// ============================================================
+
 		private static bool ImportTextAssetRaw(
 			string inputFile,
 			AssetsTools.NET.AssetTypeValueField baseField,
@@ -315,14 +485,57 @@ namespace UAFGJ
 			replacementData =
 				Array.Empty<byte>();
 
+			// ------------------------------------------------------------
+			// BASIC VALIDATION
+			// ------------------------------------------------------------
+
+			if (string.IsNullOrWhiteSpace(inputFile))
+			{
+				DebugStr(
+					"[TXT] TextAsset input path is empty.");
+
+				return false;
+			}
+
+			if (!File.Exists(inputFile))
+			{
+				DebugStr(
+					$"[TXT] TextAsset replacement file does not exist: " +
+					$"{inputFile}");
+
+				return false;
+			}
+
+			if (afie == null)
+			{
+				DebugStr(
+					"[TXT] AssetFileInfo is null.");
+
+				return false;
+			}
+
+			if (afie.TypeId != 49)
+			{
+				DebugStr(
+					$"[TXT] ImportTextAssetRaw called for wrong TypeID=" +
+					$"{afie.TypeId}. Expected TypeID=49.");
+
+				return false;
+			}
+
 			if (baseField == null ||
 				baseField.IsDummy)
 			{
 				DebugStr(
-					"[TXT] TextAsset BaseField is null/dummy.");
+					$"[TXT] TextAsset BaseField is null/dummy. " +
+					$"PID={afie.PathId}");
 
 				return false;
 			}
+
+			// ------------------------------------------------------------
+			// ORIGINAL PAYLOAD
+			// ------------------------------------------------------------
 
 			try
 			{
@@ -333,15 +546,32 @@ namespace UAFGJ
 			{
 				DebugStr(
 					$"[TXT] Could not serialize original TextAsset " +
-					$"PID={afie.PathId}: {ex}");
+					$"PID={afie.PathId}: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				return false;
+			}
+
+			if (originalSerializedData == null ||
+				originalSerializedData.Length == 0)
+			{
+				DebugStr(
+					$"[TXT] Original TextAsset PID={afie.PathId} " +
+					"serialized to zero bytes.");
 
 				return false;
 			}
 
 			DebugStr(
-				$"[TXT] Original TextAsset serialized size=" +
-				$"{originalSerializedData.Length} " +
+				$"[TXT] ORIGINAL TextAsset: " +
+				$"PID={afie.PathId}, " +
+				$"TypeID={afie.TypeId}, " +
+				$"bytes={originalSerializedData.Length}, " +
 				$"SHA256={Sha256Hex(originalSerializedData)}");
+
+			// ------------------------------------------------------------
+			// ACCESS FIELDS
+			// ------------------------------------------------------------
 
 			AssetsTools.NET.AssetTypeValueField nameField;
 			AssetsTools.NET.AssetTypeValueField scriptField;
@@ -358,183 +588,140 @@ namespace UAFGJ
 			{
 				DebugStr(
 					$"[TXT] Could not access TextAsset fields " +
-					$"for PID={afie.PathId}: {ex}");
+					$"for PID={afie.PathId}: " +
+					$"{ex.GetType().Name}: {ex.Message}");
 
 				return false;
 			}
 
 			if (nameField == null ||
-				nameField.IsDummy ||
-				scriptField == null ||
+				nameField.IsDummy)
+			{
+				DebugStr(
+					$"[TXT] TextAsset PID={afie.PathId} has " +
+					"no usable m_Name field.");
+
+				return false;
+			}
+
+			if (scriptField == null ||
 				scriptField.IsDummy)
 			{
 				DebugStr(
-					$"[TXT] TextAsset PID={afie.PathId} " +
-					"does not have valid m_Name/m_Script fields.");
+					$"[TXT] TextAsset PID={afie.PathId} has " +
+					"no usable m_Script field.");
 
 				return false;
 			}
 
-			string text;
+			// ------------------------------------------------------------
+			// PRESERVE m_Name
+			// ------------------------------------------------------------
+
+			string originalName = "";
 
 			try
 			{
-				text =
-					File.ReadAllText(
-						inputFile,
-						new UTF8Encoding(
-							encoderShouldEmitUTF8Identifier: false,
-							throwOnInvalidBytes: false));
+				originalName =
+					nameField.AsString ?? "";
+			}
+			catch
+			{
+				originalName = "";
+			}
+
+			DebugStr(
+				$"[TXT] Preserving TextAsset m_Name='{originalName}'.");
+
+			// ------------------------------------------------------------
+			// READ RAW BINARY INPUT
+			// ------------------------------------------------------------
+
+			byte[] inputBytes;
+
+			try
+			{
+				inputBytes =
+					File.ReadAllBytes(inputFile);
 			}
 			catch (Exception ex)
 			{
 				DebugStr(
-					$"[TXT] Could not read TextAsset source " +
-					$"'{inputFile}': {ex}");
+					$"[TXT] Could not read binary TextAsset source " +
+					$"'{inputFile}': " +
+					$"{ex.GetType().Name}: {ex.Message}");
 
 				return false;
 			}
 
-			if (text.Length > 0 &&
-				text[0] == '\uFEFF')
-			{
-				text =
-					text.Substring(1);
-			}
-
-			bool looksLikeExportDump =
-				text.StartsWith(
-					"0 TextAsset Base",
-					StringComparison.Ordinal);
-
-			if (looksLikeExportDump)
+			if (inputBytes == null ||
+				inputBytes.Length == 0)
 			{
 				DebugStr(
-					"[TXT] Detected UABEA TextAsset Export Dump.");
+					$"[TXT] TextAsset replacement '{inputFile}' " +
+					"contains zero bytes.");
 
-				string[] lines =
-					text.Replace(
-						"\r\n",
-						"\n")
-						.Replace(
-							"\r",
-							"\n")
-						.Split('\n');
-
-				string dumpedName =
-					null;
-
-				string dumpedScript =
-					null;
-
-				foreach (string rawLine in lines)
-				{
-					string line =
-						rawLine;
-
-					const string namePrefix =
-						" 1 string m_Name = ";
-
-					if (line.StartsWith(
-						namePrefix,
-						StringComparison.Ordinal))
-					{
-						string value =
-							line.Substring(
-								namePrefix.Length)
-								.Trim();
-
-						dumpedName =
-							ParseDumpString(
-								value);
-
-						continue;
-					}
-
-					const string scriptPrefix =
-						" 1 string m_Script = ";
-
-					if (line.StartsWith(
-						scriptPrefix,
-						StringComparison.Ordinal))
-					{
-						string value =
-							line.Substring(
-								scriptPrefix.Length)
-								.Trim();
-
-						dumpedScript =
-							ParseDumpString(
-								value);
-
-						continue;
-					}
-				}
-
-				if (dumpedScript == null)
-				{
-					DisplayStr(
-						"[TXT] File looks like a UABEA TextAsset Export Dump " +
-						"but m_Script could not be parsed.");
-
-					return false;
-				}
-
-				if (dumpedName != null)
-				{
-					try
-					{
-						nameField.AsString =
-							dumpedName;
-
-						DebugStr(
-							$"[TXT] Imported m_Name from dump: " +
-							$"'{dumpedName}'");
-					}
-					catch (Exception ex)
-					{
-						DebugStr(
-							$"[TXT] Failed assigning m_Name from dump: {ex}");
-
-						return false;
-					}
-				}
-
-				text =
-					dumpedScript;
-
-				DebugStr(
-					$"[TXT] Extracted m_Script from UABEA dump. " +
-					$"Length={text.Length}");
-			}
-			else
-			{
-				DebugStr(
-					"[TXT] Input is raw TextAsset text; " +
-					"no dump wrapper detected.");
+				return false;
 			}
 
 			DebugStr(
-				$"[TXT] Original TextAsset m_Script length=" +
-				$"{scriptField.AsString?.Length ?? 0}");
+				$"[TXT] RAW TextAsset source: " +
+				$"file='{inputFile}', " +
+				$"bytes={inputBytes.Length}, " +
+				$"SHA256={Sha256Hex(inputBytes)}");
 
-			DebugStr(
-				$"[TXT] New TextAsset m_Script length=" +
-				$"{text.Length}");
+			// ------------------------------------------------------------
+			// CRITICAL:
+			//
+			// This is a binary TextAsset.
+			//
+			// DO NOT:
+			//     AsString = ...
+			//
+			// DO:
+			//     AsByteArray = ...
+			// ------------------------------------------------------------
 
 			try
 			{
-				scriptField.AsString =
-					text;
+				scriptField.AsByteArray =
+					inputBytes;
 			}
 			catch (Exception ex)
 			{
 				DebugStr(
-					$"[TXT] Failed assigning TextAsset.m_Script " +
-					$"for PID={afie.PathId}: {ex}");
+					$"[TXT] Failed assigning binary TextAsset.m_Script " +
+					$"for PID={afie.PathId}: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				DebugStr(
+					ex.ToString());
 
 				return false;
 			}
+
+			// Re-assign original name explicitly.
+			//
+			// This prevents any future importer change from accidentally
+			// deriving m_Name from the replacement filename.
+			try
+			{
+				nameField.AsString =
+					originalName;
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[TXT] Failed restoring original m_Name " +
+					$"'{originalName}' for PID={afie.PathId}: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				return false;
+			}
+
+			// ------------------------------------------------------------
+			// SERIALIZE MODIFIED TEXTASSET
+			// ------------------------------------------------------------
 
 			try
 			{
@@ -545,12 +732,17 @@ namespace UAFGJ
 			{
 				DebugStr(
 					$"[TXT] Could not serialize modified TextAsset " +
-					$"PID={afie.PathId}: {ex}");
+					$"PID={afie.PathId}: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				DebugStr(
+					ex.ToString());
 
 				return false;
 			}
 
-			if (replacementData.Length == 0)
+			if (replacementData == null ||
+				replacementData.Length == 0)
 			{
 				DebugStr(
 					$"[TXT] Modified TextAsset PID={afie.PathId} " +
@@ -560,9 +752,79 @@ namespace UAFGJ
 			}
 
 			DebugStr(
-				$"[TXT] Modified TextAsset serialized size=" +
-				$"{replacementData.Length} " +
+				$"[TXT] MODIFIED TextAsset: " +
+				$"PID={afie.PathId}, " +
+				$"TypeID={afie.TypeId}, " +
+				$"bytes={replacementData.Length}, " +
 				$"SHA256={Sha256Hex(replacementData)}");
+
+			// ------------------------------------------------------------
+			// VERIFY m_Script AFTER ASSIGNMENT
+			// ------------------------------------------------------------
+
+			try
+			{
+				byte[] verifyScript =
+					scriptField.AsByteArray;
+
+				if (verifyScript == null)
+				{
+					DebugStr(
+						$"[TXT] Verification failed: " +
+						"m_Script.AsByteArray returned null.");
+
+					return false;
+				}
+
+				DebugStr(
+					$"[TXT] VERIFY m_Script: " +
+					$"bytes={verifyScript.Length}, " +
+					$"SHA256={Sha256Hex(verifyScript)}");
+
+				if (verifyScript.Length != inputBytes.Length)
+				{
+					DebugStr(
+						$"[FATAL] TextAsset m_Script length mismatch: " +
+						$"actual={verifyScript.Length}, " +
+						$"expected={inputBytes.Length}");
+
+					return false;
+				}
+
+				string actualScriptSha =
+					Sha256Hex(verifyScript);
+
+				string expectedScriptSha =
+					Sha256Hex(inputBytes);
+
+				if (!string.Equals(
+					actualScriptSha,
+					expectedScriptSha,
+					StringComparison.OrdinalIgnoreCase))
+				{
+					DebugStr(
+						"[FATAL] TextAsset m_Script SHA256 mismatch " +
+						"immediately after import.");
+
+					return false;
+				}
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[TXT] Could not verify TextAsset m_Script " +
+					$"for PID={afie.PathId}: " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				return false;
+			}
+
+			DebugStr(
+				$"[TXT] Binary TextAsset import PASSED: " +
+				$"PID={afie.PathId}, " +
+				$"originalName='{originalName}', " +
+				$"replacementBytes={inputBytes.Length}, " +
+				$"serializedBytes={replacementData.Length}");
 
 			return true;
 		}
@@ -799,24 +1061,28 @@ namespace UAFGJ
 		// ============================================================
 
 		private static bool FindTXTFile(
-			string inputFile,
-			ref AssetsFileInstance assetInst,
-			ref AssetFileInfo afie,
-			ref AssetsTools.NET.AssetTypeValueField atvf,
-			ref AssetsManager am,
-			ref string asset,
-			ref string assetfile_name,
-			string specific_pathid,
-			string specific_fileid,
-			string fileKind,
-			out byte[] rawReplacementData,
-			out byte[] originalSerializedData)
+	string inputFile,
+	ref AssetsFileInstance assetInst,
+	ref AssetFileInfo afie,
+	ref AssetsTools.NET.AssetTypeValueField atvf,
+	ref AssetsManager am,
+	ref string asset,
+	ref string assetfile_name,
+	string specific_pathid,
+	string specific_fileid,
+	string fileKind,
+	out byte[] rawReplacementData,
+	out byte[] originalSerializedData)
 		{
 			rawReplacementData =
 				Array.Empty<byte>();
 
 			originalSerializedData =
 				Array.Empty<byte>();
+
+			// ============================================================
+			// BASIC VALIDATION
+			// ============================================================
 
 			if (assetInst == null)
 			{
@@ -842,6 +1108,40 @@ namespace UAFGJ
 				return false;
 			}
 
+			// ============================================================
+			// NORMALIZE FILE ID
+			// ============================================================
+
+			string normalizedFileId =
+				specific_fileid?.Trim() ?? "";
+
+			if (normalizedFileId == "-")
+			{
+				normalizedFileId = "";
+			}
+
+			bool hasExplicitFileId =
+				!string.IsNullOrWhiteSpace(
+					normalizedFileId);
+
+			int requestedFileId = 0;
+
+			if (hasExplicitFileId &&
+				!int.TryParse(
+					normalizedFileId,
+					out requestedFileId))
+			{
+				DisplayStr(
+					$"[TXT] Invalid FileID '{specific_fileid}'. " +
+					"Expected an integer or '-'.");
+
+				return false;
+			}
+
+			// ============================================================
+			// PATH ID
+			// ============================================================
+
 			long wantedPathId;
 
 			bool hasWantedPathId =
@@ -849,18 +1149,23 @@ namespace UAFGJ
 					specific_pathid,
 					out wantedPathId);
 
-			// ========================================================
+			// ============================================================
 			// EXACT PATH ID
-			// ========================================================
+			// ============================================================
 
 			if (hasWantedPathId)
 			{
 				DebugStr(
 					$"[TXT] Searching assets in '{assetfile_name}' " +
-					$"for exact PID {wantedPathId}");
+					$"for exact PID {wantedPathId}, " +
+					$"FileID='{normalizedFileId}'.");
 
 				List<TargetAssetCandidate> candidates =
-	new List<TargetAssetCandidate>();
+					new List<TargetAssetCandidate>();
+
+				// --------------------------------------------------------
+				// LOCAL FILEID 0
+				// --------------------------------------------------------
 
 				AssetFileInfo localInfo =
 					assetInst.file.AssetInfos.FirstOrDefault(
@@ -877,6 +1182,10 @@ namespace UAFGJ
 							Info = localInfo
 						});
 				}
+
+				// --------------------------------------------------------
+				// EXTERNAL FILE IDS
+				// --------------------------------------------------------
 
 				for (int fileId = 1;
 					 fileId <= assetInst.file.Metadata.Externals.Count;
@@ -897,13 +1206,39 @@ namespace UAFGJ
 							continue;
 						}
 
-						candidates.Add(
+						TargetAssetCandidate externalCandidate =
 							new TargetAssetCandidate
 							{
 								FileId = fileId,
 								File = ext.file,
 								Info = ext.info
-							});
+							};
+
+						// ----------------------------------------------------
+						// IGNORE EXTERNAL REFERENCE IF IT RESOLVES TO THE SAME
+						// PHYSICAL ASSET ALREADY PRESENT AS FILEID=0.
+						// ----------------------------------------------------
+
+						bool duplicate =
+							candidates.Any(
+								existing =>
+									AreSameResolvedAsset(
+										existing,
+										externalCandidate));
+
+						if (duplicate)
+						{
+							DebugStr(
+								$"[TXT] Duplicate resolved reference ignored: " +
+								$"FileID={fileId}, " +
+								$"PID={wantedPathId}, " +
+								$"TypeID={ext.info.TypeId}, " +
+								$"File='{ext.file.name}'.");
+							continue;
+						}
+
+						candidates.Add(
+							externalCandidate);
 					}
 					catch (Exception ex)
 					{
@@ -913,6 +1248,35 @@ namespace UAFGJ
 							$"{ex.GetType().Name}: {ex.Message}");
 					}
 				}
+
+				// --------------------------------------------------------
+				// SAFETY DEDUP
+				// --------------------------------------------------------
+
+				List<TargetAssetCandidate> uniqueCandidates =
+					new List<TargetAssetCandidate>();
+
+				foreach (TargetAssetCandidate candidate in candidates)
+				{
+					if (candidate == null)
+						continue;
+
+					bool duplicate =
+						uniqueCandidates.Any(
+							existing =>
+								AreSameResolvedAsset(
+									existing,
+									candidate));
+
+					if (duplicate)
+						continue;
+
+					uniqueCandidates.Add(
+						candidate);
+				}
+
+				candidates =
+					uniqueCandidates;
 
 				DebugStr(
 					$"[TXT] Candidates for PID={wantedPathId}: " +
@@ -930,17 +1294,15 @@ namespace UAFGJ
 
 				TargetAssetCandidate selectedCandidate = null;
 
-				if (!string.IsNullOrWhiteSpace(specific_fileid))
-				{
-					if (!int.TryParse(
-						specific_fileid,
-						out int requestedFileId))
-					{
-						DisplayStr(
-							$"[TXT] Invalid FileID '{specific_fileid}'.");
+				// ========================================================
+				// EXPLICIT FILE ID
+				// ========================================================
 
-						return false;
-					}
+				if (hasExplicitFileId)
+				{
+					DebugStr(
+						$"[TXT] Explicit FileID requested: " +
+						$"{requestedFileId}");
 
 					selectedCandidate =
 						candidates.FirstOrDefault(
@@ -955,13 +1317,12 @@ namespace UAFGJ
 
 						return false;
 					}
-
-					DebugStr(
-						$"[TXT] Explicit FileID selected: " +
-						$"FileID={selectedCandidate.FileId}, " +
-						$"PID={selectedCandidate.Info.PathId}, " +
-						$"TypeID={selectedCandidate.Info.TypeId}");
 				}
+
+				// ========================================================
+				// NO FILE ID
+				// ========================================================
+
 				else
 				{
 					if (candidates.Count == 0)
@@ -980,30 +1341,10 @@ namespace UAFGJ
 					}
 					else
 					{
-						var groupedByType =
-							candidates
-								.GroupBy(
-									c =>
-										c.Info.TypeId)
-								.ToList();
-
-						bool ambiguous =
-							groupedByType.Any(
-								g =>
-									g.Count() > 1);
-
-						if (ambiguous)
-						{
-							DisplayStr(
-								$"[FATAL] AMBIGUOUS TARGET: " +
-								$"PID={wantedPathId} has multiple assets " +
-								$"with the same TypeID.");
-
-							DisplayStr(
-								"[TXT] FileID is required.");
-
-							return false;
-						}
+						// ----------------------------------------------------
+						// Prefer FileID=0 ONLY when there is no distinct
+						// external asset of the same TypeID.
+						// ----------------------------------------------------
 
 						TargetAssetCandidate localCandidate =
 							candidates.FirstOrDefault(
@@ -1012,14 +1353,29 @@ namespace UAFGJ
 
 						if (localCandidate != null)
 						{
-							selectedCandidate =
-								localCandidate;
+							int localTypeId =
+								localCandidate.Info.TypeId;
+
+							bool anotherSameType =
+								candidates.Any(
+									c =>
+										c.FileId != 0 &&
+										c.Info.TypeId ==
+											localTypeId);
+
+							if (!anotherSameType)
+							{
+								selectedCandidate =
+									localCandidate;
+							}
 						}
-						else
+
+						if (selectedCandidate == null)
 						{
 							DisplayStr(
-								$"[TXT] PID={wantedPathId} exists in multiple " +
-								$"files with different TypeIDs and no FileID was specified.");
+								$"[FATAL] AMBIGUOUS TARGET: " +
+								$"PID={wantedPathId} resolves to " +
+								$"{candidates.Count} distinct assets.");
 
 							DisplayStr(
 								"[TXT] FileID is required.");
@@ -1028,6 +1384,10 @@ namespace UAFGJ
 						}
 					}
 				}
+
+				// ========================================================
+				// APPLY SELECTED TARGET
+				// ========================================================
 
 				assetInst =
 					selectedCandidate.File;
@@ -1045,9 +1405,9 @@ namespace UAFGJ
 					$"TypeID={afie.TypeId}, " +
 					$"File='{assetfile_name}'");
 
-				// ====================================================
-				// TEXTASSET - TYPEID 49
-				// ====================================================
+				// ========================================================
+				// TEXTASSET TYPEID=49
+				// ========================================================
 
 				if (afie.TypeId == 49)
 				{
@@ -1077,7 +1437,7 @@ namespace UAFGJ
 						textAssetField.IsDummy)
 					{
 						DisplayStr(
-							$"[TXT] TextAsset PID {wantedPathId} " +
+							$"[TXT] TextAsset PID={wantedPathId} " +
 							"returned a null/dummy BaseField.");
 
 						return false;
@@ -1091,7 +1451,7 @@ namespace UAFGJ
 							textAssetField);
 
 					DebugStr(
-						$"[TXT] Target is TextAsset: " +
+						$"[TXT] Target is binary TextAsset: " +
 						$"PID={afie.PathId}, " +
 						$"Name='{textAssetName}', " +
 						$"TypeID={afie.TypeId}");
@@ -1105,16 +1465,12 @@ namespace UAFGJ
 						out rawReplacementData);
 				}
 
-				// ====================================================
-				// GAMEOBJECT - TYPEID 1
-				// ====================================================
+				// ========================================================
+				// GAMEOBJECT TYPEID=1
+				// ========================================================
 
 				if (afie.TypeId == 1)
 				{
-					DebugStr(
-						$"[TXT] Target is GameObject " +
-						$"(TypeID=1), PID={afie.PathId}.");
-
 					if (!string.Equals(
 							fileKind,
 							"GAMEOBJECT_FULL",
@@ -1126,28 +1482,22 @@ namespace UAFGJ
 					{
 						DisplayStr(
 							$"[GAMEOBJECT] Unsupported fileKind " +
-							$"'{fileKind}'. " +
-							"Expected GAMEOBJECT_FULL or " +
-							"GAMEOBJECT_FULL_CHECKED.");
+							$"'{fileKind}'.");
 
 						return false;
 					}
 
 					AssetsTools.NET.AssetTypeValueField modifiedBaseField;
 
-					byte[] gameObjectOriginalData;
+					byte[] originalData;
 
 					bool success;
 
 					if (string.Equals(
-							fileKind,
-							"GAMEOBJECT_FULL",
-							StringComparison.OrdinalIgnoreCase))
+						fileKind,
+						"GAMEOBJECT_FULL",
+						StringComparison.OrdinalIgnoreCase))
 					{
-						DebugStr(
-							"[GAMEOBJECT] Kind=GAMEOBJECT_FULL. " +
-							"Using FULL unchecked GameObject import.");
-
 						success =
 							ImportGameObjectFull(
 								inputFile,
@@ -1157,14 +1507,10 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out gameObjectOriginalData);
+								out originalData);
 					}
 					else
 					{
-						DebugStr(
-							"[GAMEOBJECT] Kind=GAMEOBJECT_FULL_CHECKED. " +
-							"Using FULL checked GameObject import.");
-
 						success =
 							ImportGameObjectFullChecked(
 								inputFile,
@@ -1174,36 +1520,27 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out gameObjectOriginalData);
+								out originalData);
 					}
 
 					if (!success)
-					{
-						DisplayStr(
-							"[GAMEOBJECT] GameObject import failed.");
-
 						return false;
-					}
 
 					atvf =
 						modifiedBaseField;
 
 					originalSerializedData =
-						gameObjectOriginalData;
+						originalData;
 
 					return true;
 				}
 
-				// ====================================================
-				// MONOBEHAVIOUR - TYPEID 114
-				// ====================================================
+				// ========================================================
+				// MONOBEHAVIOUR TYPEID=114
+				// ========================================================
 
 				if (afie.TypeId == 114)
 				{
-					DebugStr(
-						$"[TXT] Target is MonoBehaviour " +
-						$"(TypeID=114), PID={afie.PathId}.");
-
 					ushort monoId;
 
 					try
@@ -1212,31 +1549,28 @@ namespace UAFGJ
 							assetInst.file.GetScriptIndex(
 								afie);
 					}
-					catch (Exception ex)
+					catch
 					{
-						DebugStr(
-							$"[TXT] Could not read MonoScriptIndex " +
-							$"for PID={afie.PathId}: {ex}");
-
-						monoId =
-							0;
+						monoId = 0;
 					}
 
 					DebugStr(
 						$"[TXT] MonoScriptIndex={monoId} " +
 						$"(0x{monoId:X4}).");
 
+					if (string.IsNullOrWhiteSpace(fileKind))
+					{
+						fileKind =
+							"MONOBEHAVIOUR_FULL_CHECKED";
+					}
+
 					if (string.Equals(
 						fileKind,
 						"MONOBEHAVIOUR_TEXT",
 						StringComparison.OrdinalIgnoreCase))
 					{
-						DebugStr(
-							"[TXT] Kind=MONOBEHAVIOUR_TEXT. " +
-							"Using RAW m_text replacement.");
-
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourTextOnly(
@@ -1247,7 +1581,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1256,7 +1590,7 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
@@ -1266,12 +1600,8 @@ namespace UAFGJ
 						"MONOBEHAVIOUR_TEXT_CHECKED",
 						StringComparison.OrdinalIgnoreCase))
 					{
-						DebugStr(
-							"[TXT] Kind=MONOBEHAVIOUR_TEXT_CHECKED. " +
-							"Using RAW m_text replacement.");
-
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourTextOnlyChecked(
@@ -1282,7 +1612,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1291,26 +1621,22 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
 					if (string.Equals(
-						fileKind,
-						"MONOBEHAVIOUR_FULL",
-						StringComparison.OrdinalIgnoreCase) ||
+							fileKind,
+							"MONOBEHAVIOUR_FULL",
+							StringComparison.OrdinalIgnoreCase) ||
 						string.Equals(
 							fileKind,
 							"MONOBEHAVIOUR_FONT",
 							StringComparison.OrdinalIgnoreCase))
 					{
-						DebugStr(
-							$"[TXT] Kind={fileKind}. " +
-							"Using FULL unchecked MonoBehaviour import.");
-
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourFull(
@@ -1321,7 +1647,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1330,26 +1656,22 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
 					if (string.Equals(
-						fileKind,
-						"MONOBEHAVIOUR_FULL_CHECKED",
-						StringComparison.OrdinalIgnoreCase) ||
+							fileKind,
+							"MONOBEHAVIOUR_FULL_CHECKED",
+							StringComparison.OrdinalIgnoreCase) ||
 						string.Equals(
 							fileKind,
 							"MONOBEHAVIOUR_FONT_CHECKED",
 							StringComparison.OrdinalIgnoreCase))
 					{
-						DebugStr(
-							$"[TXT] Kind={fileKind}. " +
-							"Using FULL checked MonoBehaviour import.");
-
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourFullChecked(
@@ -1360,7 +1682,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1369,60 +1691,24 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
-
-						return true;
-					}
-
-					if (string.IsNullOrWhiteSpace(fileKind))
-					{
-						DebugStr(
-							"[TXT] fileKind empty for MonoBehaviour; " +
-							"using MONOBEHAVIOUR_FULL_CHECKED.");
-
-						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
-
-						bool success =
-							ImportMonoBehaviourFullChecked(
-								inputFile,
-								am,
-								afie,
-								assetInst,
-								assetfile_name,
-								out modifiedBaseField,
-								out rawReplacementData,
-								out monoOriginalData);
-
-						if (!success)
-							return false;
-
-						atvf =
-							modifiedBaseField;
-
-						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
 					DisplayStr(
-						$"[TXT] Unsupported MonoBehaviour " +
-						$"fileKind '{fileKind}'.");
+						$"[TXT] Unsupported MonoBehaviour fileKind " +
+						$"'{fileKind}'.");
 
 					return false;
 				}
 
-				// ====================================================
-				// UNITY FONT - TYPEID 128
-				// ====================================================
+				// ========================================================
+				// FONT TYPEID=128
+				// ========================================================
 
 				if (afie.TypeId == 128)
 				{
-					DebugStr(
-						$"[FONT] Target is Unity Font " +
-						$"(TypeID=128), PID={afie.PathId}.");
-
 					AssetsTools.NET.AssetTypeValueField fontField;
 
 					try
@@ -1435,12 +1721,9 @@ namespace UAFGJ
 					catch (Exception ex)
 					{
 						DisplayStr(
-							$"[FONT] Failed reading Unity Font " +
-							$"PID={wantedPathId}: " +
+							$"[FONT] Failed reading Unity Font PID " +
+							$"{wantedPathId}: " +
 							$"{ex.GetType().Name}: {ex.Message}");
-
-						DebugStr(
-							ex.ToString());
 
 						return false;
 					}
@@ -1458,24 +1741,10 @@ namespace UAFGJ
 					atvf =
 						fontField;
 
-					string fontName =
-						GetAssetName(
-							fontField);
-
-					DebugStr(
-						$"[FONT] Found Unity Font by exact PID: " +
-						$"PID={afie.PathId}, " +
-						$"Name='{fontName}', " +
-						$"TypeID={afie.TypeId}");
-
 					if (string.IsNullOrWhiteSpace(fileKind))
 					{
 						fileKind =
 							"FONT_CHECKED";
-
-						DebugStr(
-							"[FONT] fileKind empty; " +
-							"using FONT_CHECKED.");
 					}
 
 					if (!string.Equals(
@@ -1489,15 +1758,13 @@ namespace UAFGJ
 					{
 						DisplayStr(
 							$"[FONT] Unsupported fileKind " +
-							$"'{fileKind}'. " +
-							"Expected FONT or FONT_CHECKED.");
+							$"'{fileKind}'.");
 
 						return false;
 					}
 
 					AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-
-					byte[] fontOriginalData;
+					byte[] originalData;
 
 					bool success;
 
@@ -1515,7 +1782,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out fontOriginalData);
+								out originalData);
 					}
 					else
 					{
@@ -1528,7 +1795,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out fontOriginalData);
+								out originalData);
 					}
 
 					if (!success)
@@ -1538,21 +1805,17 @@ namespace UAFGJ
 						modifiedBaseField;
 
 					originalSerializedData =
-						fontOriginalData;
+						originalData;
 
 					return true;
 				}
 
-				// ====================================================
-				// RECTTRANSFORM - TYPEID 224
-				// ====================================================
+				// ========================================================
+				// RECTTRANSFORM TYPEID=224
+				// ========================================================
 
 				if (afie.TypeId == 224)
 				{
-					DebugStr(
-						$"[TXT] Target is RectTransform " +
-						$"(TypeID=224), PID={afie.PathId}.");
-
 					AssetsTools.NET.AssetTypeValueField rectField;
 
 					try
@@ -1568,9 +1831,6 @@ namespace UAFGJ
 							$"[RECTTRANSFORM] Failed reading PID " +
 							$"{wantedPathId}: " +
 							$"{ex.GetType().Name}: {ex.Message}");
-
-						DebugStr(
-							ex.ToString());
 
 						return false;
 					}
@@ -1588,42 +1848,10 @@ namespace UAFGJ
 					atvf =
 						rectField;
 
-					string rectName =
-						GetAssetName(
-							rectField);
-
-					DebugStr(
-						$"[RECTTRANSFORM] Found RectTransform by exact PID: " +
-						$"PID={afie.PathId}, " +
-						$"Name='{rectName}', " +
-						$"TypeID={afie.TypeId}");
-
 					if (string.IsNullOrWhiteSpace(fileKind))
 					{
 						fileKind =
 							"RECTTRANSFORM_FULL_CHECKED";
-
-						DebugStr(
-							"[RECTTRANSFORM] fileKind empty; " +
-							"using RECTTRANSFORM_FULL_CHECKED.");
-					}
-
-					if (!string.Equals(
-						fileKind,
-						"RECTTRANSFORM_FULL",
-						StringComparison.OrdinalIgnoreCase) &&
-						!string.Equals(
-							fileKind,
-							"RECTTRANSFORM_FULL_CHECKED",
-							StringComparison.OrdinalIgnoreCase))
-					{
-						DisplayStr(
-							$"[RECTTRANSFORM] Unsupported fileKind " +
-							$"'{fileKind}'. " +
-							"Expected RECTTRANSFORM_FULL or " +
-							"RECTTRANSFORM_FULL_CHECKED.");
-
-						return false;
 					}
 
 					return ImportRectTransform(
@@ -1635,17 +1863,12 @@ namespace UAFGJ
 						out rawReplacementData);
 				}
 
-
-				// ====================================================
-				// SPRITE - TYPEID 213
-				// ====================================================
+				// ========================================================
+				// SPRITE TYPEID=213
+				// ========================================================
 
 				if (afie.TypeId == 213)
 				{
-					DebugStr(
-						$"[TXT] Target is Sprite " +
-						$"(TypeID=213), PID={afie.PathId}.");
-
 					AssetsTools.NET.AssetTypeValueField spriteField;
 
 					try
@@ -1661,9 +1884,6 @@ namespace UAFGJ
 							$"[SPRITE] Failed reading PID " +
 							$"{wantedPathId}: " +
 							$"{ex.GetType().Name}: {ex.Message}");
-
-						DebugStr(
-							ex.ToString());
 
 						return false;
 					}
@@ -1681,42 +1901,10 @@ namespace UAFGJ
 					atvf =
 						spriteField;
 
-					string spriteName =
-						GetAssetName(
-							spriteField);
-
-					DebugStr(
-						$"[SPRITE] Found Sprite by exact PID: " +
-						$"PID={afie.PathId}, " +
-						$"Name='{spriteName}', " +
-						$"TypeID={afie.TypeId}");
-
 					if (string.IsNullOrWhiteSpace(fileKind))
 					{
 						fileKind =
 							"SPRITE_FULL";
-
-						DebugStr(
-							"[SPRITE] fileKind empty; " +
-							"using SPRITE_FULL.");
-					}
-
-					if (!string.Equals(
-						fileKind,
-						"SPRITE_FULL",
-						StringComparison.OrdinalIgnoreCase) &&
-						!string.Equals(
-							fileKind,
-							"SPRITE_FULL_CHECKED",
-							StringComparison.OrdinalIgnoreCase))
-					{
-						DisplayStr(
-							$"[SPRITE] Unsupported fileKind " +
-							$"'{fileKind}'. " +
-							"Expected SPRITE_FULL or " +
-							"SPRITE_FULL_CHECKED.");
-
-						return false;
 					}
 
 					return ImportSprite(
@@ -1729,27 +1917,16 @@ namespace UAFGJ
 						out rawReplacementData);
 				}
 
-
-				// ====================================================
-				// UNSUPPORTED TYPE
-				// ====================================================
-
 				DisplayStr(
 					$"[TXT] Asset PID={afie.PathId} has unsupported " +
-					$"TypeID={afie.TypeId}. " +
-					"Supported TXT targets are: " +
-					"TextAsset (49), " +
-					"MonoBehaviour (114), " +
-					"RectTransform (224), " +
-					"Sprite (213).");
+					$"TypeID={afie.TypeId}.");
 
 				return false;
 			}
 
-
-			// ========================================================
+			// ============================================================
 			// FALLBACK BY NAME
-			// ========================================================
+			// ============================================================
 
 			string targetName =
 				Path.GetFileNameWithoutExtension(
@@ -1760,17 +1937,15 @@ namespace UAFGJ
 				$"Searching supported serialized assets in " +
 				$"'{assetfile_name}' by name '{targetName}'.");
 
-			int candidatesScanned =
-				0;
+			int candidatesScanned = 0;
 
-			foreach (var inf
-				in assetInst.file.AssetInfos.Where(
-					a =>
-						a.TypeId == 49 ||
-						a.TypeId == 114 ||
-						a.TypeId == 128 ||
-						a.TypeId == 224 ||
-						a.TypeId == 213))
+			foreach (var inf in assetInst.file.AssetInfos.Where(
+				a =>
+					a.TypeId == 49 ||
+					a.TypeId == 114 ||
+					a.TypeId == 128 ||
+					a.TypeId == 224 ||
+					a.TypeId == 213))
 			{
 				candidatesScanned++;
 
@@ -1783,13 +1958,8 @@ namespace UAFGJ
 							assetInst,
 							inf);
 				}
-				catch (Exception ex)
+				catch
 				{
-					DebugStr(
-						$"[TXT] Failed reading candidate PID " +
-						$"{inf.PathId}: " +
-						$"{ex.GetType().Name}: {ex.Message}");
-
 					continue;
 				}
 
@@ -1817,24 +1987,12 @@ namespace UAFGJ
 				atvf =
 					candidate;
 
-				DebugStr(
-					$"[TXT] Found supported serialized asset by name: " +
-					$"'{name}', " +
-					$"PID={afie.PathId}, " +
-					$"TypeID={afie.TypeId}");
-
-				// ====================================================
+				// ========================================================
 				// TEXTASSET
-				// ====================================================
+				// ========================================================
 
 				if (afie.TypeId == 49)
 				{
-					if (string.IsNullOrWhiteSpace(fileKind))
-					{
-						fileKind =
-							"TEXTASSET_FULL_CHECKED";
-					}
-
 					return ImportTextAssetRaw(
 						inputFile,
 						atvf,
@@ -1844,9 +2002,9 @@ namespace UAFGJ
 						out rawReplacementData);
 				}
 
-				// ====================================================
+				// ========================================================
 				// MONOBEHAVIOUR
-				// ====================================================
+				// ========================================================
 
 				if (afie.TypeId == 114)
 				{
@@ -1856,10 +2014,13 @@ namespace UAFGJ
 							"MONOBEHAVIOUR_FULL_CHECKED";
 					}
 
-					if (fileKind == "MONOBEHAVIOUR_TEXT")
+					if (string.Equals(
+						fileKind,
+						"MONOBEHAVIOUR_TEXT",
+						StringComparison.OrdinalIgnoreCase))
 					{
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourTextOnly(
@@ -1870,7 +2031,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1879,15 +2040,18 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
-					if (fileKind == "MONOBEHAVIOUR_TEXT_CHECKED")
+					if (string.Equals(
+						fileKind,
+						"MONOBEHAVIOUR_TEXT_CHECKED",
+						StringComparison.OrdinalIgnoreCase))
 					{
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourTextOnlyChecked(
@@ -1898,7 +2062,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1907,16 +2071,22 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
-					if (fileKind == "MONOBEHAVIOUR_FULL" ||
-						fileKind == "MONOBEHAVIOUR_FONT")
+					if (string.Equals(
+							fileKind,
+							"MONOBEHAVIOUR_FULL",
+							StringComparison.OrdinalIgnoreCase) ||
+						string.Equals(
+							fileKind,
+							"MONOBEHAVIOUR_FONT",
+							StringComparison.OrdinalIgnoreCase))
 					{
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourFull(
@@ -1927,7 +2097,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1936,16 +2106,22 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
-					if (fileKind == "MONOBEHAVIOUR_FULL_CHECKED" ||
-						fileKind == "MONOBEHAVIOUR_FONT_CHECKED")
+					if (string.Equals(
+							fileKind,
+							"MONOBEHAVIOUR_FULL_CHECKED",
+							StringComparison.OrdinalIgnoreCase) ||
+						string.Equals(
+							fileKind,
+							"MONOBEHAVIOUR_FONT_CHECKED",
+							StringComparison.OrdinalIgnoreCase))
 					{
 						AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-						byte[] monoOriginalData;
+						byte[] originalData;
 
 						bool success =
 							ImportMonoBehaviourFullChecked(
@@ -1956,7 +2132,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out monoOriginalData);
+								out originalData);
 
 						if (!success)
 							return false;
@@ -1965,21 +2141,17 @@ namespace UAFGJ
 							modifiedBaseField;
 
 						originalSerializedData =
-							monoOriginalData;
+							originalData;
 
 						return true;
 					}
 
-					DisplayStr(
-						$"[TXT] Unsupported MonoBehaviour " +
-						$"fileKind '{fileKind}'.");
-
 					return false;
 				}
 
-				// ====================================================
-				// UNITY FONT
-				// ====================================================
+				// ========================================================
+				// FONT
+				// ========================================================
 
 				if (afie.TypeId == 128)
 				{
@@ -1989,26 +2161,8 @@ namespace UAFGJ
 							"FONT_CHECKED";
 					}
 
-					if (!string.Equals(
-							fileKind,
-							"FONT",
-							StringComparison.OrdinalIgnoreCase) &&
-						!string.Equals(
-							fileKind,
-							"FONT_CHECKED",
-							StringComparison.OrdinalIgnoreCase))
-					{
-						DisplayStr(
-							$"[FONT] Unsupported fileKind " +
-							$"'{fileKind}'. " +
-							"Expected FONT or FONT_CHECKED.");
-
-						return false;
-					}
-
 					AssetsTools.NET.AssetTypeValueField modifiedBaseField;
-
-					byte[] fontOriginalData;
+					byte[] originalData;
 
 					bool success;
 
@@ -2026,7 +2180,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out fontOriginalData);
+								out originalData);
 					}
 					else
 					{
@@ -2039,7 +2193,7 @@ namespace UAFGJ
 								assetfile_name,
 								out modifiedBaseField,
 								out rawReplacementData,
-								out fontOriginalData);
+								out originalData);
 					}
 
 					if (!success)
@@ -2049,14 +2203,14 @@ namespace UAFGJ
 						modifiedBaseField;
 
 					originalSerializedData =
-						fontOriginalData;
+						originalData;
 
 					return true;
 				}
 
-				// ====================================================
+				// ========================================================
 				// RECTTRANSFORM
-				// ====================================================
+				// ========================================================
 
 				if (afie.TypeId == 224)
 				{
@@ -2064,22 +2218,6 @@ namespace UAFGJ
 					{
 						fileKind =
 							"RECTTRANSFORM_FULL_CHECKED";
-					}
-
-					if (!string.Equals(
-						fileKind,
-						"RECTTRANSFORM_FULL",
-						StringComparison.OrdinalIgnoreCase) &&
-						!string.Equals(
-							fileKind,
-							"RECTTRANSFORM_FULL_CHECKED",
-							StringComparison.OrdinalIgnoreCase))
-					{
-						DisplayStr(
-							$"[RECTTRANSFORM] Unsupported fileKind " +
-							$"'{fileKind}'.");
-
-						return false;
 					}
 
 					return ImportRectTransform(
@@ -2091,9 +2229,9 @@ namespace UAFGJ
 						out rawReplacementData);
 				}
 
-				// ====================================================
+				// ========================================================
 				// SPRITE
-				// ====================================================
+				// ========================================================
 
 				if (afie.TypeId == 213)
 				{
@@ -2101,26 +2239,6 @@ namespace UAFGJ
 					{
 						fileKind =
 							"SPRITE_FULL";
-
-						DebugStr(
-							"[SPRITE] fileKind empty; " +
-							"using SPRITE_FULL.");
-					}
-
-					if (!string.Equals(
-						fileKind,
-						"SPRITE_FULL",
-						StringComparison.OrdinalIgnoreCase) &&
-						!string.Equals(
-							fileKind,
-							"SPRITE_FULL_CHECKED",
-							StringComparison.OrdinalIgnoreCase))
-					{
-						DisplayStr(
-							$"[SPRITE] Unsupported fileKind " +
-							$"'{fileKind}'.");
-
-						return false;
 					}
 
 					return ImportSprite(
@@ -2150,16 +2268,16 @@ namespace UAFGJ
 		// ============================================================
 
 		private static bool FindPNGFile(
-			string inputFile,
-			ref AssetFileInfo afie,
-			ref AssetsFileInstance assetInst,
-			ref AssetsTools.NET.AssetTypeValueField atvf,
-			ref AssetsManager am,
-			ref string asset,
-			ref string assetfile_name,
-			string specificPathId,
-			string specificFileId,
-			string fileKind)
+	string inputFile,
+	ref AssetFileInfo afie,
+	ref AssetsFileInstance assetInst,
+	ref AssetsTools.NET.AssetTypeValueField atvf,
+	ref AssetsManager am,
+	ref string asset,
+	ref string assetfile_name,
+	string specificPathId,
+	string specificFileId,
+	string fileKind)
 		{
 			if (assetInst == null)
 			{
@@ -2195,6 +2313,10 @@ namespace UAFGJ
 				TryParsePathId(
 					specificPathId,
 					out wantedPathId);
+
+			// ============================================================
+			// EXACT PATH ID
+			// ============================================================
 
 			if (hasWantedPathId)
 			{
@@ -2234,7 +2356,8 @@ namespace UAFGJ
 					candidate =
 						am.GetBaseField(
 							targetFile,
-							targetInfo);
+							targetInfo,
+							AssetReadFlags.ForceFromCldb);
 				}
 				catch (Exception ex)
 				{
@@ -2275,6 +2398,13 @@ namespace UAFGJ
 					GetAssetName(
 						candidate);
 
+				Console.WriteLine(
+					$"[TEX-BEFORE] " +
+					$"file='{targetFile.name}' " +
+					$"pathId={targetInfo.PathId} " +
+					$"typeId={targetInfo.TypeId} " +
+					$"name='{name}'");
+
 				DebugStr(
 					$"[PNG] Selected Texture2D: " +
 					$"FileID={selectedFileId}, " +
@@ -2290,16 +2420,18 @@ namespace UAFGJ
 				return true;
 			}
 
+			// ============================================================
+			// FALLBACK BY NAME
+			// ============================================================
+
 			DebugStr(
 				$"[PNG] No valid PathID supplied. " +
 				$"Searching Texture2D by name '{targetName}'.");
 
-			int candidatesScanned =
-				0;
+			int candidatesScanned = 0;
 
-			foreach (var inf
-				in assetInst.file.GetAssetsOfType(
-					(int)AssetClassID.Texture2D))
+			foreach (var inf in assetInst.file.GetAssetsOfType(
+				(int)AssetClassID.Texture2D))
 			{
 				candidatesScanned++;
 
@@ -2339,6 +2471,9 @@ namespace UAFGJ
 					atvf =
 						candidate;
 
+					assetfile_name =
+						assetInst.name;
+
 					DebugStr(
 						$"[PNG] Found Texture2D by name: " +
 						$"Name='{name}', " +
@@ -2352,9 +2487,6 @@ namespace UAFGJ
 						$"[PNG] Failed reading candidate PID " +
 						$"{inf.PathId}: " +
 						$"{ex.GetType().Name}: {ex.Message}");
-
-					DebugStr(
-						ex.ToString());
 				}
 			}
 

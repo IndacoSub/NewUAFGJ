@@ -82,7 +82,7 @@ namespace UAFGJ
 
 				default:
 					throw new InvalidDataException(
-						$"No automatic TXT fileKind is defined for TypeID={typeId}.");
+						$"[FATAL] No automatic TXT fileKind is defined for TypeID={typeId}.");
 			}
 		}
 
@@ -119,7 +119,7 @@ namespace UAFGJ
 				if (targetTypeId != 28)
 				{
 					throw new InvalidDataException(
-						$"PNG replacement requires Texture2D TypeID=28, " +
+						$"[FATAL] PNG replacement requires Texture2D TypeID=28, " +
 						$"but target TypeID={targetTypeId}.");
 				}
 
@@ -217,6 +217,561 @@ namespace UAFGJ
 							StringComparison.OrdinalIgnoreCase);
 				}
 
+		private sealed class BundleAssetFileCandidate
+		{
+			public int DirectoryIndex;
+			public string Name = "";
+			public AssetsFileInstance Instance = null;
+		}
+
+		private static List<BundleAssetFileCandidate> LoadAllSerializedAssetFilesFromBundle(
+			AssetsManager am,
+			BundleFileInstance bundleInst)
+		{
+			if (am == null)
+				throw new ArgumentNullException(nameof(am));
+
+			if (bundleInst == null || bundleInst.file == null)
+				throw new ArgumentNullException(nameof(bundleInst));
+
+			var result =
+				new List<BundleAssetFileCandidate>();
+
+			var directories =
+				bundleInst.file
+					.BlockAndDirInfo
+					.DirectoryInfos;
+
+			DebugStr(
+				$"[DISCOVERY] Bundle contains {directories.Count} directory entries.");
+
+			for (int i = 0; i < directories.Count; i++)
+			{
+				var dir =
+					directories[i];
+
+				bool isSerializedAssets =
+					(dir.Flags & 0x04u) != 0;
+
+				DebugStr(
+					$"[DISCOVERY] directory[{i}] " +
+					$"name='{dir.Name}', " +
+					$"flags=0x{dir.Flags:X8}, " +
+					$"serialized={isSerializedAssets}");
+
+				if (!isSerializedAssets)
+				{
+					DebugStr(
+						$"[DISCOVERY] Skipping non-serialized entry '{dir.Name}'.");
+					continue;
+				}
+
+				int fileIndex =
+					bundleInst.file.GetFileIndex(
+						dir.Name);
+
+				if (fileIndex < 0)
+				{
+					throw new InvalidDataException(
+						$"Serialized bundle entry '{dir.Name}' " +
+						"could not be resolved to a file index.");
+				}
+
+				AssetsFileInstance inst =
+					am.LoadAssetsFileFromBundle(
+						bundleInst,
+						fileIndex,
+						true);
+
+				if (inst == null)
+				{
+					throw new InvalidDataException(
+						$"Could not load serialized assets file " +
+						$"'{dir.Name}' from bundle.");
+				}
+
+				DebugStr(
+					$"[DISCOVERY] Loaded serialized assets file " +
+					$"'{dir.Name}', " +
+					$"assets={inst.file.AssetInfos.Count}, " +
+					$"unity={inst.file.Metadata.UnityVersion}");
+
+				try
+				{
+					EnsureClassDatabaseIfNeeded(
+						am,
+						inst);
+				}
+				catch (Exception ex)
+				{
+					DebugStr(
+						$"[DISCOVERY] Class database setup failed for " +
+						$"'{dir.Name}': " +
+						$"{ex.GetType().Name}: {ex.Message}");
+
+					throw;
+				}
+
+				result.Add(
+					new BundleAssetFileCandidate
+					{
+						DirectoryIndex = i,
+						Name = dir.Name,
+						Instance = inst
+					});
+			}
+
+			if (result.Count == 0)
+			{
+				throw new InvalidDataException(
+					"Bundle contains no serialized assets files.");
+			}
+
+			DebugStr(
+				$"[DISCOVERY] Serialized assets files loaded: {result.Count}");
+
+			return result;
+		}
+
+		private static bool FindTargetAcrossBundleAssetsFiles(
+	string bundlePath,
+	string inputFile,
+	string specificPathId,
+	string specificFileId,
+	string fileKind,
+	AssetsManager am,
+	BundleFileInstance bundleInst,
+	List<BundleAssetFileCandidate> candidates,
+	out AssetsFileInstance targetAssetInst,
+	out AssetFileInfo targetAfie,
+	out AssetTypeValueField targetAtvf,
+	out string targetAssetFileName,
+	out byte[] rawReplacementData,
+	out byte[] originalTargetData,
+	out string videoResourceEntryName)
+		{
+			targetAssetInst = null;
+			targetAfie = null;
+			targetAtvf = null;
+			targetAssetFileName = null;
+			rawReplacementData = null;
+			originalTargetData = null;
+			videoResourceEntryName = null;
+
+			// ============================================================
+			// NORMALIZE FILE ID
+			// ============================================================
+
+			string normalizedFileId =
+				specificFileId?.Trim() ?? "";
+
+			if (normalizedFileId == "-")
+			{
+				normalizedFileId = "";
+			}
+
+			int matchCount = 0;
+
+			foreach (BundleAssetFileCandidate bundleCandidate in candidates)
+			{
+				if (bundleCandidate == null ||
+					bundleCandidate.Instance == null)
+				{
+					continue;
+				}
+
+				AssetsFileInstance currentAssetInst =
+					bundleCandidate.Instance;
+
+				string currentDirectoryName =
+					bundleCandidate.Name;
+
+				DebugStr(
+					$"[DISCOVERY] Searching target in directory[" +
+					$"{bundleCandidate.DirectoryIndex}] " +
+					$"'{currentDirectoryName}'.");
+
+				// ============================================================
+				// TEMP STATE
+				// ============================================================
+
+				AssetsFileInstance tempAssetInst =
+					currentAssetInst;
+
+				AssetFileInfo tempAfie =
+					null;
+
+				AssetTypeValueField tempAtvf =
+					null;
+
+				AssetsManager tempAm =
+					am;
+
+				string tempAsset =
+					"";
+
+				string tempAssetFileName =
+					currentDirectoryName;
+
+				byte[] tempReplacementData =
+					null;
+
+				byte[] tempOriginalData =
+					null;
+
+				string tempVideoResourceEntryName =
+					null;
+
+				bool found =
+					false;
+
+				string currentKind =
+					fileKind ?? "";
+
+				// ============================================================
+				// EXPLICIT PNG
+				// ============================================================
+
+				if (string.Equals(
+					currentKind,
+					"PNG",
+					StringComparison.OrdinalIgnoreCase))
+				{
+					found =
+						FindPNGFile(
+							inputFile,
+							ref tempAfie,
+							ref tempAssetInst,
+							ref tempAtvf,
+							ref tempAm,
+							ref tempAsset,
+							ref tempAssetFileName,
+							specificPathId,
+							normalizedFileId,
+							currentKind);
+				}
+
+				// ============================================================
+				// EXPLICIT TXT
+				// ============================================================
+
+				else if (string.Equals(
+					currentKind,
+					"TXT",
+					StringComparison.OrdinalIgnoreCase))
+				{
+					found =
+						FindTXTFile(
+							inputFile,
+							ref tempAssetInst,
+							ref tempAfie,
+							ref tempAtvf,
+							ref tempAm,
+							ref tempAsset,
+							ref tempAssetFileName,
+							specificPathId,
+							normalizedFileId,
+							currentKind,
+							out tempReplacementData,
+							out tempOriginalData);
+				}
+
+				// ============================================================
+				// AUTOMATIC
+				// ============================================================
+
+				else
+				{
+					// --------------------------------------------------------
+					// VIDEOCLIP AS RESOURCE
+					// --------------------------------------------------------
+
+					found =
+						FindVideoClipAsResourceFile(
+							inputFile,
+							ref tempAssetInst,
+							ref tempAfie,
+							ref tempAtvf,
+							ref tempAm,
+							bundleInst,
+							ref tempAssetFileName,
+							specificPathId,
+							normalizedFileId,
+							currentKind,
+							out tempReplacementData,
+							out tempOriginalData,
+							out tempVideoResourceEntryName);
+
+					// --------------------------------------------------------
+					// PNG
+					// --------------------------------------------------------
+
+					if (!found)
+					{
+						tempAssetInst =
+							currentAssetInst;
+
+						tempAfie =
+							null;
+
+						tempAtvf =
+							null;
+
+						tempAsset =
+							"";
+
+						tempAssetFileName =
+							currentDirectoryName;
+
+						found =
+							FindPNGFile(
+								inputFile,
+								ref tempAfie,
+								ref tempAssetInst,
+								ref tempAtvf,
+								ref tempAm,
+								ref tempAsset,
+								ref tempAssetFileName,
+								specificPathId,
+								normalizedFileId,
+								currentKind);
+					}
+
+					// --------------------------------------------------------
+					// TXT
+					// --------------------------------------------------------
+
+					if (!found)
+					{
+						tempAssetInst =
+							currentAssetInst;
+
+						tempAfie =
+							null;
+
+						tempAtvf =
+							null;
+
+						tempAsset =
+							"";
+
+						tempAssetFileName =
+							currentDirectoryName;
+
+						found =
+							FindTXTFile(
+								inputFile,
+								ref tempAssetInst,
+								ref tempAfie,
+								ref tempAtvf,
+								ref tempAm,
+								ref tempAsset,
+								ref tempAssetFileName,
+								specificPathId,
+								normalizedFileId,
+								currentKind,
+								out tempReplacementData,
+								out tempOriginalData);
+					}
+				}
+
+				// ============================================================
+				// NO MATCH
+				// ============================================================
+
+				if (!found ||
+					tempAssetInst == null ||
+					tempAfie == null)
+				{
+					continue;
+				}
+
+				// ============================================================
+				// VERIFY RESOLVED ASSETS FILE IS IN THIS BUNDLE
+				// ============================================================
+
+				bool assetFileBelongsToBundle =
+					false;
+
+				foreach (BundleAssetFileCandidate candidate in candidates)
+				{
+					if (candidate == null)
+						continue;
+
+					if (ReferenceEquals(
+						candidate.Instance,
+						tempAssetInst))
+					{
+						assetFileBelongsToBundle =
+							true;
+
+						break;
+					}
+
+					if (!string.IsNullOrWhiteSpace(
+							candidate.Name) &&
+						!string.IsNullOrWhiteSpace(
+							tempAssetFileName) &&
+						string.Equals(
+							candidate.Name,
+							tempAssetFileName,
+							StringComparison.OrdinalIgnoreCase))
+					{
+						assetFileBelongsToBundle =
+							true;
+
+						break;
+					}
+				}
+
+				if (!assetFileBelongsToBundle)
+				{
+					DebugStr(
+						$"[DISCOVERY] Ignoring resolved asset outside current bundle: " +
+						$"file='{tempAssetFileName}', " +
+						$"PID={tempAfie.PathId}, " +
+						$"TypeID={tempAfie.TypeId}");
+
+					continue;
+				}
+
+				// ============================================================
+				// DEDUP SAME UNDERLYING ASSET
+				// ============================================================
+
+				if (targetAssetInst != null &&
+					targetAfie != null)
+				{
+					bool sameInstance =
+						ReferenceEquals(
+							tempAssetInst,
+							targetAssetInst) &&
+						tempAfie.PathId ==
+							targetAfie.PathId &&
+						tempAfie.TypeId ==
+							targetAfie.TypeId;
+
+					bool sameFile =
+						!string.IsNullOrWhiteSpace(
+							tempAssetFileName) &&
+						!string.IsNullOrWhiteSpace(
+							targetAssetFileName) &&
+						string.Equals(
+							tempAssetFileName,
+							targetAssetFileName,
+							StringComparison.OrdinalIgnoreCase) &&
+						tempAfie.PathId ==
+							targetAfie.PathId &&
+						tempAfie.TypeId ==
+							targetAfie.TypeId;
+
+					if (sameInstance ||
+						sameFile)
+					{
+						DebugStr(
+							$"[DISCOVERY] TARGET DUPLICATE IGNORED: " +
+							$"same underlying asset already selected. " +
+							$"file='{tempAssetFileName}', " +
+							$"PID={tempAfie.PathId}, " +
+							$"TypeID={tempAfie.TypeId}");
+
+						continue;
+					}
+				}
+
+				// ============================================================
+				// REAL MATCH
+				// ============================================================
+
+				matchCount++;
+
+				DebugStr(
+					$"[DISCOVERY] TARGET MATCH #{matchCount}: " +
+					$"file='{tempAssetFileName}', " +
+					$"PID={tempAfie.PathId}, " +
+					$"TypeID={tempAfie.TypeId}, " +
+					$"Name='{GetAssetName(tempAtvf)}'");
+
+				DebugStr(
+					$"[DISCOVERY] TARGET MATCH DATA: " +
+					$"replacementBytes=" +
+					$"{(tempReplacementData?.Length ?? 0)}, " +
+					$"replacementSHA=" +
+					$"{(tempReplacementData != null
+						? Sha256Hex(tempReplacementData)
+						: "<null>")}");
+
+				// ============================================================
+				// FIRST REAL MATCH
+				// ============================================================
+
+				if (matchCount == 1)
+				{
+					targetAssetInst =
+						tempAssetInst;
+
+					targetAfie =
+						tempAfie;
+
+					targetAtvf =
+						tempAtvf;
+
+					targetAssetFileName =
+						tempAssetFileName;
+
+					rawReplacementData =
+						tempReplacementData;
+
+					originalTargetData =
+						tempOriginalData;
+
+					videoResourceEntryName =
+						tempVideoResourceEntryName;
+
+					if (targetAfie.TypeId == 49)
+					{
+						DebugStr(
+							"[DISCOVERY] Selected binary TextAsset TypeID=49.");
+					}
+
+					continue;
+				}
+
+				// ============================================================
+				// REAL AMBIGUITY
+				// ============================================================
+
+				throw new InvalidDataException(
+					$"AMBIGUOUS BUNDLE TARGET: " +
+					$"PID={specificPathId} matches more than one " +
+					$"distinct serialized asset. " +
+					$"Use FileID or otherwise disambiguate the target.");
+			}
+
+			// ============================================================
+			// NO TARGET
+			// ============================================================
+
+			if (matchCount == 0)
+			{
+				DebugStr(
+					$"[DISCOVERY] No bundle target found for " +
+					$"PID={specificPathId}, " +
+					$"FileID='{normalizedFileId}', " +
+					$"kind='{fileKind}'.");
+
+				return false;
+			}
+
+			DebugStr(
+				$"[DISCOVERY] Bundle target resolved uniquely: " +
+				$"file='{targetAssetFileName}', " +
+				$"PID={targetAfie.PathId}, " +
+				$"TypeID={targetAfie.TypeId}.");
+
+			return true;
+		}
+
 		// ============================================================
 		// HANDLE BUNDLE
 		// ============================================================
@@ -249,10 +804,24 @@ namespace UAFGJ
 				$"[CHECK] INPUT replacement SHA256={Sha256File(input_file)} " +
 				$"length={new FileInfo(input_file).Length}");
 
+			string classDataPath =
+				Path.Combine(
+					AppContext.BaseDirectory,
+					"classdata.tpk");
+
+			DebugStr(
+				$"[CHECK] AppBase='{AppContext.BaseDirectory}'");
+
+			DebugStr(
+				$"[CHECK] CurrentDirectory='{Environment.CurrentDirectory}'");
+
+			DebugStr(
+				$"[CHECK] classdata.tpk='{classDataPath}'");
+
 			DebugStr(
 				$"[CHECK] classdata.tpk SHA256=" +
-				$"{(File.Exists("classdata.tpk")
-					? Sha256File("classdata.tpk")
+				$"{(File.Exists(classDataPath)
+					? Sha256File(classDataPath)
 					: "MISSING")}");
 
 			string tempBundlePath =
@@ -310,50 +879,24 @@ namespace UAFGJ
 
 				if (bundleInst == null)
 				{
-					DisplayStr(
-						"[BUNDLE] Could not load bundle.");
-
-					return;
+					throw new InvalidDataException(
+						"[FATAL] Could not load bundle.");
 				}
 
-				string assetfile_name =
-					GetRightAssetFileNameFromBundle(
-						bundleInst,
-						ab);
-
-				if (string.IsNullOrEmpty(
-					assetfile_name))
-				{
-					DisplayStr(
-						"[BUNDLE] Could not determine contained assets file.");
-
-					return;
-				}
-
-				LogPhase(
-					$"Loading contained assets file '{assetfile_name}'.");
-
-				AssetsFileInstance assetInst =
-					GetAssetInst(
-						am,
-						bundleInst,
-						assetfile_name,
-						ab);
-
-				if (assetInst == null)
-				{
-					DisplayStr(
-						$"[BUNDLE] Could not load assets file '{assetfile_name}'.");
-
-					return;
-				}
-
-				EnsureClassDatabaseIfNeeded(
+				List<BundleAssetFileCandidate> bundleAssetFiles =
+				LoadAllSerializedAssetFilesFromBundle(
 					am,
-					assetInst);
+					bundleInst);
+
+				AssetsFileInstance assetInst = null;
+				string assetfile_name = null;
 
 				AssetBundleCompressionType originalCompression =
-					bundleInst.file.GetCompressionType();
+					bundleInst.originalCompression;
+
+				DebugStr(
+				$"[CHECK] ORIGINAL bundle compression={originalCompression}; " +
+				$"current working bundle compression={bundleInst.file.GetCompressionType()}.");
 
 				var originalDirectoryNames =
 					bundleInst.file.BlockAndDirInfo.DirectoryInfos
@@ -398,79 +941,70 @@ namespace UAFGJ
 					$"pathId='{specific_pathid}', " +
 					$"fileId='{specific_fileid}'.");
 
-				if (isVideoClipAsResource)
-				{
-					if (!FindVideoClipAsResourceFile(
+				// ----------------------------------------------------
+				// FIND TARGET ACROSS ALL SERIALIZED BUNDLE ENTRIES
+				// ----------------------------------------------------
+
+				string videoResourceEntryName = null;
+
+				bool targetFound =
+					FindTargetAcrossBundleAssetsFiles(
+						ab,
 						input_file,
-						ref assetInst,
-						ref afie,
-						ref atvf,
-						ref am,
-						bundleInst,
-						ref assetfile_name,
 						specific_pathid,
 						specific_fileid,
 						fileKind,
+						am,
+						bundleInst,
+						bundleAssetFiles,
+						out assetInst,
+						out afie,
+						out atvf,
+						out assetfile_name,
 						out rawReplacementData,
 						out originalTargetData,
-						out string videoResourceEntryName))
-					{
-						DisplayStr(
-							"Failed to replace VideoClip + external .resource.");
+						out videoResourceEntryName);
 
-						return;
-					}
+				if (!targetFound)
+				{
+					Environment.ExitCode = 1;
 
+					throw new InvalidDataException(
+						$"[FATAL] Target asset was not found in bundle. " +
+						$"PID={specific_pathid}, " +
+						$"FileID='{specific_fileid}', " +
+						$"input='{input_file}'.");
+				}
+
+				DebugStr(
+					$"[DISCOVERY] Selected target: " +
+					$"assetFile='{assetfile_name}', " +
+					$"PID={afie.PathId}, " +
+					$"TypeID={afie.TypeId}");
+
+				// ----------------------------------------------------
+				// VIDEOCLIP + RESOURCE
+				// ----------------------------------------------------
+
+				if (isVideoClipAsResource)
+				{
 					DebugStr(
-						$"[VIDEO] Prepared resource entry '{videoResourceEntryName}'.");
+						$"[VIDEO] Prepared resource entry " +
+						$"'{videoResourceEntryName}'.");
 				}
-				else if (isTextReplacement)
-				{
-					if (!FindTXTFile(
-						input_file,
-						ref assetInst,
-						ref afie,
-						ref atvf,
-						ref am,
-						ref ab,
-						ref assetfile_name,
-						specific_pathid,
-						specific_fileid,
-						fileKind,
-						out rawReplacementData,
-						out originalTargetData))
-					{
-						DisplayStr(
-							"Failed to replace TXT/serialized asset.");
 
-						return;
-					}
-				}
-				else
-				{
-					if (!FindPNGFile(
-						input_file,
-						ref afie,
-						ref assetInst,
-						ref atvf,
-						ref am,
-						ref ab,
-						ref assetfile_name,
-						specific_pathid,
-						specific_fileid,
-						fileKind))
-					{
-						return;
-					}
+				// ----------------------------------------------------
+				// PNG / TEXTURE2D
+				// ----------------------------------------------------
 
+				else if (IsPngReplacement(input_file))
+				{
 					if (atvf == null ||
 						atvf.IsDummy)
 					{
-						DisplayStr(
+						throw new InvalidDataException(
 							"[PNG] Replacement target BaseField " +
 							"is null/dummy.");
-
-						return;
 					}
 
 					int format =
@@ -482,7 +1016,8 @@ namespace UAFGJ
 						format,
 						fileKind))
 					{
-						return;
+						throw new InvalidDataException(
+							"[FATAL] Texture import failed.");
 					}
 
 					rawReplacementData =
@@ -490,6 +1025,33 @@ namespace UAFGJ
 
 					originalTargetData =
 						null;
+
+					DebugStr(
+						$"[PNG] Imported Texture2D replacement: " +
+						$"bytes={rawReplacementData.Length}, " +
+						$"SHA256={Sha256Hex(rawReplacementData)}");
+				}
+
+				// ----------------------------------------------------
+				// TXT / SERIALIZED ASSET
+				// ----------------------------------------------------
+				//
+				// FindTargetAcrossBundleAssetsFiles() already called
+				// FindTXTFile() on the correct AssetsFileInstance.
+				//
+				// Therefore there is NOTHING ELSE to import here.
+				// rawReplacementData and originalTargetData have already
+				// been populated by FindTXTFile().
+				//
+				else
+				{
+					DebugStr(
+						$"[TXT] Replacement prepared by bundle-wide target search: " +
+						$"bytes={rawReplacementData?.Length ?? 0}, " +
+						$"SHA256=" +
+						$"{(rawReplacementData == null
+							? "<null>"
+							: Sha256Hex(rawReplacementData))}");
 				}
 
 				// ====================================================
@@ -498,11 +1060,9 @@ namespace UAFGJ
 
 				if (afie == null)
 				{
-					DisplayStr(
-						"[CHECK] Replacement target is missing; " +
+					throw new InvalidDataException(
+						"[FATAL] Replacement target is missing; " +
 						"refusing to write.");
-
-					return;
 				}
 
 				// ====================================================
@@ -559,23 +1119,19 @@ namespace UAFGJ
 				if (rawReplacementData == null ||
 					rawReplacementData.Length == 0)
 				{
-					DisplayStr(
-						"[CHECK] Replacement data is missing; " +
+					throw new InvalidDataException(
+						"[FATAL] Replacement data is missing; " +
 						"refusing to write.");
-
-					return;
 				}
 
 				if (!rawMonoTextKind &&
 					(atvf == null ||
 					 atvf.IsDummy))
 				{
-					DisplayStr(
-						"[CHECK] Replacement BaseField is missing for " +
+					throw new InvalidDataException(
+						"[FATAL] Replacement BaseField is missing for " +
 						$"fileKind='{effectiveFileKind}'; " +
 						"refusing to write.");
-
-					return;
 				}
 
 				DebugStr(
@@ -609,7 +1165,7 @@ namespace UAFGJ
 				if (targetBefore == null)
 				{
 					throw new InvalidDataException(
-						"Target PathID disappeared " +
+						"[FATAL] Target PathID disappeared " +
 						"from pre-write snapshot.");
 				}
 
@@ -617,7 +1173,7 @@ namespace UAFGJ
 					expectedTargetTypeId)
 				{
 					throw new InvalidDataException(
-						$"Replacement target TypeID changed " +
+						$"[FATAL] Replacement target TypeID changed " +
 						$"before save: " +
 						$"{targetBefore.TypeId}->" +
 						$"{expectedTargetTypeId}");
@@ -792,25 +1348,25 @@ namespace UAFGJ
 			if (modifiedBaseField == null)
 			{
 				throw new InvalidOperationException(
-					"Modified base field is null.");
+					"[FATAL] Modified base field is null.");
 			}
 
 			if (afie == null)
 			{
 				throw new InvalidOperationException(
-					"Asset info is null.");
+					"[FATAL] Asset info is null.");
 			}
 
 			if (assetInst == null)
 			{
 				throw new InvalidOperationException(
-					"Assets file instance is null.");
+					"[FATAL] Assets file instance is null.");
 			}
 
 			if (bundleInst == null)
 			{
 				throw new InvalidOperationException(
-					"Bundle instance is null.");
+					"[FATAL] Bundle instance is null.");
 			}
 
 			// ========================================================
@@ -824,7 +1380,7 @@ namespace UAFGJ
 				replacementData.Length == 0)
 			{
 				throw new InvalidDataException(
-					"Modified BaseField serialized to an empty payload.");
+					"[FATAL] Modified BaseField serialized to an empty payload.");
 			}
 
 			DebugStr(
@@ -862,7 +1418,7 @@ namespace UAFGJ
 			if (afie.Replacer == null)
 			{
 				throw new InvalidDataException(
-					$"SetNewData did not create a replacer " +
+					$"[FATAL] SetNewData did not create a replacer " +
 					$"for PID={afie.PathId}.");
 			}
 
@@ -918,7 +1474,7 @@ namespace UAFGJ
 			if (dirIndex < 0)
 			{
 				throw new InvalidDataException(
-					$"Bundle entry not found: {assetfile_name}");
+					$"[FATAL] Bundle entry not found: {assetfile_name}");
 			}
 
 			bundleInst.file
@@ -926,6 +1482,18 @@ namespace UAFGJ
 				.DirectoryInfos[dirIndex]
 				.SetNewData(
 					newAssetData);
+
+			var dirInfo =
+			bundleInst.file
+				.BlockAndDirInfo
+				.DirectoryInfos[dirIndex];
+
+			DebugStr(
+						$"[SAVE] Bundle directory replacement: " +
+						$"name='{dirInfo.Name}', " +
+						$"originalSize={dirInfo.DecompressedSize}, " +
+						$"replacerType={dirInfo.ReplacerType}, " +
+						$"replacerSize={dirInfo.Replacer?.GetSize() ?? -1}");
 
 			// ========================================================
 			// WRITE TEMPORARY BUNDLE
@@ -987,7 +1555,7 @@ namespace UAFGJ
 				replacementData.Length == 0)
 			{
 				throw new InvalidDataException(
-					"Raw replacement data is empty.");
+					"[FATAL] Raw replacement data is empty.");
 			}
 
 			if (afie == null ||
@@ -995,7 +1563,7 @@ namespace UAFGJ
 				bundleInst == null)
 			{
 				throw new InvalidDataException(
-					"Asset/bundle state is null.");
+					"[FATAL] Asset/bundle state is null.");
 			}
 
 			afie.SetNewData(
@@ -1027,7 +1595,7 @@ namespace UAFGJ
 			if (dirIndex < 0)
 			{
 				throw new InvalidDataException(
-					$"Bundle entry not found: {assetfile_name}");
+					$"[FATAL] Bundle entry not found: {assetfile_name}");
 			}
 
 			bundleInst.file
@@ -1081,7 +1649,7 @@ namespace UAFGJ
 				fakeName))
 			{
 				throw new FileNotFoundException(
-					"Temporary bundle missing.",
+					"[FATAL] Temporary bundle missing.",
 					fakeName);
 			}
 
@@ -1106,7 +1674,7 @@ namespace UAFGJ
 				if (bun == null)
 				{
 					throw new InvalidDataException(
-						"Could not reopen temporary bundle.");
+						"[FATAL] Could not reopen temporary bundle.");
 				}
 
 				DebugStr(
@@ -1267,7 +1835,7 @@ namespace UAFGJ
 					StringComparison.OrdinalIgnoreCase))
 				{
 					throw new InvalidDataException(
-						"Committed bundle SHA256 differs from " +
+						"[FATAL] Committed bundle SHA256 differs from " +
 						"the validated staging file.");
 				}
 			}
@@ -1321,7 +1889,7 @@ namespace UAFGJ
 				if (bundle == null)
 				{
 					throw new InvalidDataException(
-						"Post-commit verification could not reopen bundle.");
+						"[FATAL] Post-commit verification could not reopen bundle.");
 				}
 
 				DebugStr(
@@ -1334,7 +1902,7 @@ namespace UAFGJ
 				if (fileIndex < 0)
 				{
 					throw new InvalidDataException(
-						$"Post-commit verification could not find assets file " +
+						$"[FATAL] Post-commit verification could not find assets file " +
 						$"'{assetfileName}'.");
 				}
 
@@ -1347,7 +1915,7 @@ namespace UAFGJ
 				if (inst == null)
 				{
 					throw new InvalidDataException(
-						$"Post-commit verification could not reopen assets file " +
+						$"[FATAL] Post-commit verification could not reopen assets file " +
 						$"'{assetfileName}'.");
 				}
 
@@ -1360,7 +1928,7 @@ namespace UAFGJ
 				if (targetInfo == null)
 				{
 					throw new InvalidDataException(
-						$"Post-commit verification could not find target PID " +
+						$"[FATAL] Post-commit verification could not find target PID " +
 						$"{targetPathId}.");
 				}
 
@@ -1391,7 +1959,7 @@ namespace UAFGJ
 					expectedTargetData.Length)
 				{
 					throw new InvalidDataException(
-						$"Post-commit target length mismatch: " +
+						$"[FATAL] Post-commit target length mismatch: " +
 						$"actual={rawTargetData.Length}, " +
 						$"expected={expectedTargetData.Length}");
 				}
@@ -1410,7 +1978,7 @@ namespace UAFGJ
 					StringComparison.OrdinalIgnoreCase))
 				{
 					throw new InvalidDataException(
-						"Post-commit raw target payload does not match " +
+						"[FATAL] Post-commit raw target payload does not match " +
 						"the intended replacement data.");
 				}
 
@@ -1435,7 +2003,7 @@ namespace UAFGJ
 						reopenedField.IsDummy)
 					{
 						throw new InvalidDataException(
-							"[POST-COMMIT] Could not obtain reopened Sprite BaseField.");
+							"[FATAL]  Could not obtain reopened Sprite BaseField post-commit.");
 					}
 
 					AssetsTools.NET.AssetTypeValueField reopenedTextureRect =
@@ -1579,7 +2147,7 @@ namespace UAFGJ
 			if (!File.Exists(sourcePath))
 			{
 				throw new FileNotFoundException(
-					"Replacement file does not exist.",
+					"[FATAL] Replacement file does not exist.",
 					sourcePath);
 			}
 
@@ -1646,7 +2214,7 @@ namespace UAFGJ
 			}
 
 			throw new IOException(
-				$"Could not replace '{destinationPath}' " +
+				$"[FATAL] Could not replace '{destinationPath}' " +
 				$"after {maxAttempts} attempts.",
 				lastError);
 		}
@@ -1672,7 +2240,7 @@ namespace UAFGJ
 				if (bundle == null)
 				{
 					throw new InvalidDataException(
-						"Bundle could not be reopened: " +
+						"[FATAL] Bundle could not be reopened: " +
 						bundlePath);
 				}
 
@@ -1708,15 +2276,44 @@ namespace UAFGJ
 							.BlockAndDirInfo
 							.DirectoryInfos[i];
 
+					/*
+					 * IMPORTANTE:
+					 *
+					 * Non usare IsAssetsFile() qui.
+					 *
+					 * IsAssetsFile() è una detection euristica sui byte.
+					 * Un .resS/resource può produrre una falsa positività.
+					 *
+					 * Il bundle directory flag 0x04 identifica direttamente
+					 * un serialized assets file.
+					 */
+					bool isSerializedAssets =
+						(dir.Flags & 0x04u) != 0;
+
+					DebugStr(
+						$"[CHECK]   directory[{i}] " +
+						$"name='{dir.Name}', " +
+						$"flags=0x{dir.Flags:X8}, " +
+						$"serialized={isSerializedAssets}");
+
+					if (!isSerializedAssets)
+					{
+						DebugStr(
+							$"[CHECK]   skipping non-serialized bundle entry: " +
+							$"'{dir.Name}'");
+
+						continue;
+					}
+
 					int fileIndex =
 						bundle.file.GetFileIndex(
 							dir.Name);
 
-					if (fileIndex < 0 ||
-						!bundle.file.IsAssetsFile(
-							fileIndex))
+					if (fileIndex < 0)
 					{
-						continue;
+						throw new InvalidDataException(
+							$"[FATAL] Serialized bundle entry not found: " +
+							$"{dir.Name}");
 					}
 
 					AssetsFileInstance inst =
@@ -1728,7 +2325,7 @@ namespace UAFGJ
 					if (inst == null)
 					{
 						throw new InvalidDataException(
-							"Could not load assets entry: " +
+							"[FATAL] Could not load serialized assets entry: " +
 							dir.Name);
 					}
 
@@ -1887,7 +2484,7 @@ namespace UAFGJ
 					if (expectedTargetTypeId != VideoClipTypeId)
 					{
 						throw new InvalidDataException(
-							$"VIDEOCLIP_AS_RESOURCE final validation requires " +
+							$"[FATAL] VIDEOCLIP_AS_RESOURCE final validation requires " +
 							$"VideoClip TypeID={VideoClipTypeId}, " +
 							$"but received TypeID={expectedTargetTypeId}.");
 					}
@@ -1908,7 +2505,7 @@ namespace UAFGJ
 					if (expectedTargetTypeId != 28)
 					{
 						throw new InvalidDataException(
-							$"PNG final validation requires Texture2D " +
+							$"[FATAL] PNG final validation requires Texture2D " +
 							$"TypeID=28, but received TypeID={expectedTargetTypeId}.");
 					}
 				}
@@ -1936,7 +2533,7 @@ namespace UAFGJ
 				if (bundle == null)
 				{
 					throw new InvalidDataException(
-						"Final bundle cannot be reopened.");
+						"[FATAL] Final bundle cannot be reopened.");
 				}
 
 				// ====================================================
@@ -1957,7 +2554,7 @@ namespace UAFGJ
 					originalCompression)
 				{
 					throw new InvalidDataException(
-						$"Compression changed: " +
+						$"[FATAL] Compression changed: " +
 						$"original={originalCompression}, " +
 						$"final={finalCompression}");
 				}
@@ -1967,7 +2564,7 @@ namespace UAFGJ
 						StringComparer.Ordinal))
 				{
 					throw new InvalidDataException(
-						"Bundle directory entry names/order " +
+						"[FATAL] Bundle directory entry names/order " +
 						"changed after repack.");
 				}
 
@@ -1987,7 +2584,7 @@ namespace UAFGJ
 				if (fileIndex < 0)
 				{
 					throw new InvalidDataException(
-						"Expected assets file entry is missing: " +
+						"[FATAL] Expected assets file entry is missing: " +
 						assetfileName);
 				}
 
@@ -2000,7 +2597,7 @@ namespace UAFGJ
 				if (inst == null)
 				{
 					throw new InvalidDataException(
-						"Expected assets file could not be reopened: " +
+						"[FATAL] Expected assets file could not be reopened: " +
 						assetfileName);
 				}
 
@@ -2028,7 +2625,7 @@ namespace UAFGJ
 					beforeSnapshot.Assets.Count)
 				{
 					throw new InvalidDataException(
-						$"Asset count changed: " +
+						$"[FATAL] Asset count changed: " +
 						$"before={beforeSnapshot.Assets.Count} " +
 						$"after={afterSnapshot.Assets.Count}");
 				}
@@ -2049,7 +2646,7 @@ namespace UAFGJ
 					if (after == null)
 					{
 						throw new InvalidDataException(
-							"PathID disappeared after rewrite: " +
+							"[FATAL] PathID disappeared after rewrite: " +
 							before.PathId);
 					}
 
@@ -2057,7 +2654,7 @@ namespace UAFGJ
 						before.TypeId)
 					{
 						throw new InvalidDataException(
-							$"TypeID changed for PID " +
+							$"[FATAL] TypeID changed for PID " +
 							$"{before.PathId}: " +
 							$"{before.TypeId}->" +
 							$"{after.TypeId}");
@@ -2068,7 +2665,7 @@ namespace UAFGJ
 							before.MonoScriptIndex)
 					{
 						throw new InvalidDataException(
-							$"MonoScriptIndex changed for PID " +
+							$"[FATAL] MonoScriptIndex changed for PID " +
 							$"{before.PathId}: " +
 							$"{before.MonoScriptIndex}->" +
 							$"{after.MonoScriptIndex}");
@@ -2083,7 +2680,7 @@ namespace UAFGJ
 							StringComparison.OrdinalIgnoreCase))
 						{
 							throw new InvalidDataException(
-								$"UNEXPECTED ASSET CHANGE: " +
+								$"[FATAL] UNEXPECTED ASSET CHANGE: " +
 								$"PID={before.PathId} " +
 								$"name='{before.Name}' " +
 								$"SHA " +
@@ -2106,7 +2703,7 @@ namespace UAFGJ
 				if (targetBefore == null)
 				{
 					throw new InvalidDataException(
-						"Target PathID was not present in " +
+						"[FATAL] Target PathID was not present in " +
 						"the original snapshot: " +
 						targetPathId);
 				}
@@ -2124,7 +2721,7 @@ namespace UAFGJ
 				if (targetInfo == null)
 				{
 					throw new InvalidDataException(
-						"Target PathID missing after repack: " +
+						"[FATAL] Target PathID missing after repack: " +
 						targetPathId);
 				}
 
@@ -2136,7 +2733,7 @@ namespace UAFGJ
 					expectedTargetTypeId)
 				{
 					throw new InvalidDataException(
-						$"Target TypeID changed: " +
+						$"[FATAL] Target TypeID changed: " +
 						$"original={expectedTargetTypeId}, " +
 						$"final={targetInfo.TypeId}");
 				}
@@ -2160,7 +2757,7 @@ namespace UAFGJ
 						0xFFFF)
 					{
 						throw new InvalidDataException(
-							"Target MonoBehaviour lost " +
+							"[FATAL] Target MonoBehaviour lost " +
 							"its MonoScript index.");
 					}
 
@@ -2173,7 +2770,7 @@ namespace UAFGJ
 						targetBefore.MonoScriptIndex)
 					{
 						throw new InvalidDataException(
-							$"Target MonoScriptIndex changed: " +
+							$"[FATAL] Target MonoScriptIndex changed: " +
 							$"original={targetBefore.MonoScriptIndex}, " +
 							$"final={finalMonoId}");
 					}
@@ -2223,7 +2820,7 @@ namespace UAFGJ
 					catch (Exception ex)
 					{
 						throw new InvalidDataException(
-							$"Could not obtain final target BaseField " +
+							$"[FATAL] Could not obtain final target BaseField " +
 							$"for kind '{fileKind}'.",
 							ex);
 					}
@@ -2232,7 +2829,7 @@ namespace UAFGJ
 						targetField.IsDummy)
 					{
 						throw new InvalidDataException(
-							$"Final target BaseField is null/dummy " +
+							$"[FATAL] Final target BaseField is null/dummy " +
 							$"for fileKind='{fileKind}'. " +
 							"This mode requires a usable TypeTree.");
 					}
@@ -2276,14 +2873,14 @@ namespace UAFGJ
 					finalTargetData.Length == 0)
 				{
 					throw new InvalidDataException(
-						"Final target payload is null or empty.");
+						"[FATAL] Final target payload is null or empty.");
 				}
 
 				if (expectedTargetData == null ||
 					expectedTargetData.Length == 0)
 				{
 					throw new InvalidDataException(
-						"Expected target replacement payload " +
+						"[FATAL] Expected target replacement payload " +
 						"is null or empty.");
 				}
 
@@ -2322,7 +2919,7 @@ namespace UAFGJ
 					expectedTargetData.Length)
 				{
 					throw new InvalidDataException(
-						$"Final target payload length mismatch: " +
+						$"[FATAL] Final target payload length mismatch: " +
 						$"expected={expectedTargetData.Length}, " +
 						$"actual={finalTargetData.Length}");
 				}
@@ -2333,7 +2930,7 @@ namespace UAFGJ
 					StringComparison.OrdinalIgnoreCase))
 				{
 					throw new InvalidDataException(
-						"Final target payload does not match " +
+						"[FATAL] Final target payload does not match " +
 						"the in-memory replacement payload.");
 				}
 
@@ -2357,7 +2954,7 @@ namespace UAFGJ
 								fileKind))
 						{
 							throw new InvalidDataException(
-								$"TypeID=1 requires a GameObject fileKind, " +
+								$"[FATAL] TypeID=1 requires a GameObject fileKind, " +
 								$"but received '{fileKind}'.");
 						}
 
@@ -2365,7 +2962,7 @@ namespace UAFGJ
 							targetField.IsDummy)
 						{
 							throw new InvalidDataException(
-								"GAMEOBJECT validation requires " +
+								"[FATAL] GAMEOBJECT validation requires " +
 								"a valid BaseField.");
 						}
 
@@ -2468,7 +3065,7 @@ namespace UAFGJ
 							catch (Exception ex)
 							{
 								throw new InvalidDataException(
-									"MONOBEHAVIOUR_TEXT_CHECKED could not " +
+									"[FATAL] MONOBEHAVIOUR_TEXT_CHECKED could not " +
 									"access m_text.",
 									ex);
 							}
@@ -2477,7 +3074,7 @@ namespace UAFGJ
 								checkedTextField.IsDummy)
 							{
 								throw new InvalidDataException(
-									"MONOBEHAVIOUR_TEXT_CHECKED found a " +
+									"[FATAL] MONOBEHAVIOUR_TEXT_CHECKED found a " +
 									"null/dummy m_text field.");
 							}
 
@@ -2522,7 +3119,7 @@ namespace UAFGJ
 								targetField.IsDummy)
 							{
 								throw new InvalidDataException(
-									"MONOBEHAVIOUR_FONT_CHECKED requires " +
+									"[FATAL] MONOBEHAVIOUR_FONT_CHECKED requires " +
 									"a valid BaseField.");
 							}
 
@@ -2567,7 +3164,7 @@ namespace UAFGJ
 						}
 
 						throw new InvalidDataException(
-							$"Unknown MonoBehaviour fileKind " +
+							$"[FATAL] Unknown MonoBehaviour fileKind " +
 							$"'{fileKind}'.");
 					}
 
@@ -2601,7 +3198,7 @@ namespace UAFGJ
 								targetField.IsDummy)
 							{
 								throw new InvalidDataException(
-									"FONT_CHECKED requires " +
+									"[FATAL] FONT_CHECKED requires " +
 									"a valid BaseField.");
 							}
 
@@ -2617,7 +3214,7 @@ namespace UAFGJ
 						}
 
 						throw new InvalidDataException(
-							$"TypeID=128 requires a Font fileKind " +
+							$"[FATAL] TypeID=128 requires a Font fileKind " +
 							$"('FONT' or 'FONT_CHECKED'), but received '{fileKind}'.");
 					}
 
@@ -2631,7 +3228,7 @@ namespace UAFGJ
 							fileKind))
 						{
 							throw new InvalidDataException(
-								$"TypeID=224 requires a RectTransform " +
+								$"[FATAL] TypeID=224 requires a RectTransform " +
 								$"fileKind, but received '{fileKind}'.");
 						}
 
@@ -2639,7 +3236,7 @@ namespace UAFGJ
 							targetField.IsDummy)
 						{
 							throw new InvalidDataException(
-								"RECTTRANSFORM validation requires " +
+								"[FATAL] RECTTRANSFORM validation requires " +
 								"a valid BaseField.");
 						}
 
@@ -2664,7 +3261,7 @@ namespace UAFGJ
 							fileKind))
 						{
 							throw new InvalidDataException(
-								$"TypeID=213 requires a Sprite " +
+								$"[FATAL] TypeID=213 requires a Sprite " +
 								$"fileKind, but received '{fileKind}'.");
 						}
 
@@ -2672,7 +3269,7 @@ namespace UAFGJ
 							targetField.IsDummy)
 						{
 							throw new InvalidDataException(
-								"SPRITE validation requires " +
+								"[FATAL] SPRITE validation requires " +
 								"a valid BaseField.");
 						}
 
@@ -2697,7 +3294,7 @@ namespace UAFGJ
 					}
 
 					throw new InvalidDataException(
-						$"TXT replacement requested for unsupported " +
+						$"[FATAL] TXT replacement requested for unsupported " +
 						$"TypeID={expectedTargetTypeId}. " +
 						$"Supported TXT types are " +
 						$"TextAsset (49), " +
@@ -2823,7 +3420,7 @@ namespace UAFGJ
 				bundleInst.file == null)
 			{
 				throw new InvalidOperationException(
-					"Bundle instance is null.");
+					"[FATAL] Bundle instance is null.");
 			}
 
 			int dirIndex =
@@ -2833,7 +3430,7 @@ namespace UAFGJ
 			if (dirIndex < 0)
 			{
 				throw new InvalidDataException(
-					$"Bundle entry not found: {assetfileName}");
+					$"[FATAL] Bundle entry not found: {assetfileName}");
 			}
 
 			bundleInst.file.GetFileRange(
@@ -2846,7 +3443,7 @@ namespace UAFGJ
 				length > int.MaxValue)
 			{
 				throw new InvalidDataException(
-					$"Invalid bundle entry range: " +
+					$"[FATAL] Invalid bundle entry range: " +
 					$"name='{assetfileName}', " +
 					$"offset={offset}, " +
 					$"length={length}");
@@ -2858,7 +3455,7 @@ namespace UAFGJ
 			if (reader == null)
 			{
 				throw new InvalidDataException(
-					"Bundle DataReader is null.");
+					"[FATAL] Bundle DataReader is null.");
 			}
 
 			reader.Position = offset;
@@ -2871,7 +3468,7 @@ namespace UAFGJ
 				data.Length != (int)length)
 			{
 				throw new EndOfStreamException(
-					$"Could not read bundle entry '{assetfileName}'. " +
+					$"[FATAL] Could not read bundle entry '{assetfileName}'. " +
 					$"Expected={length}, " +
 					$"Actual={(data == null ? 0 : data.Length)}");
 			}
@@ -2993,14 +3590,14 @@ namespace UAFGJ
 			if (absoluteOffset < 0)
 			{
 				throw new InvalidDataException(
-					$"Invalid absolute asset offset: {absoluteOffset}");
+					$"[FATAL] Invalid absolute asset offset: {absoluteOffset}");
 			}
 
 			if (info.ByteSize < 0 ||
 				info.ByteSize > int.MaxValue)
 			{
 				throw new InvalidDataException(
-					$"Invalid asset byte size: {info.ByteSize}");
+					$"[FATAL] Invalid asset byte size: {info.ByteSize}");
 			}
 
 			reader.Position =
@@ -3014,7 +3611,7 @@ namespace UAFGJ
 				data.Length != (int)info.ByteSize)
 			{
 				throw new EndOfStreamException(
-					$"Could not read raw asset payload. " +
+					$"[FATAL] Could not read raw asset payload. " +
 					$"Expected={info.ByteSize}, " +
 					$"Actual={(data == null ? 0 : data.Length)}");
 			}

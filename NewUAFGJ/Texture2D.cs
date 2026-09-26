@@ -31,12 +31,12 @@ partial class Program
 
         if (string.IsNullOrWhiteSpace(png))
             throw new ArgumentException(
-                "PNG path is empty.",
+				"[FATAL] PNG path is empty.",
                 nameof(png));
 
         if (!File.Exists(png))
             throw new FileNotFoundException(
-                "PNG file was not found.",
+				"[FATAL] PNG file was not found.",
                 png);
 
         TextureFormat fmt =
