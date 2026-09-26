@@ -33,26 +33,58 @@ partial class Program
 		int originalHeight = 0;
 
 		AssetTypeValueField widthField = atvf["m_Width"];
-
 		AssetTypeValueField heightField = atvf["m_Height"];
 
 		if (widthField != null && !widthField.IsDummy)
-		{
 			originalWidth = widthField.AsInt;
-		}
 
 		if (heightField != null && !heightField.IsDummy)
-		{
 			originalHeight = heightField.AsInt;
-		}
 
-		bool shouldResize = !png.Contains("FOT", StringComparison.OrdinalIgnoreCase) &&
-							!png.Contains("HOT", StringComparison.OrdinalIgnoreCase) &&
-							!png.Contains("Atlas", StringComparison.OrdinalIgnoreCase);
+		/*
+		 * ------------------------------------------------------------
+		 * Texture kind
+		 *
+		 * PNG:
+		 *     normal Texture2D
+		 *
+		 * PNG_FONT:
+		 *     explicit font atlas Texture2D
+		 *
+		 * IMPORTANT:
+		 * Never infer font status from the filename.
+		 * The caller must explicitly provide PNG_FONT.
+		 * ------------------------------------------------------------
+		 */
 
-		DisplayStr($"[PNG] Importing '{Path.GetFileName(png)}' " +
-				   $"as {fmt}, original={originalWidth}x{originalHeight}, " +
-				   $"resize={shouldResize}.");
+		bool isFontTexture =
+			string.Equals(fileKind?.Trim(), "PNG_FONT", StringComparison.OrdinalIgnoreCase);
+
+		/*
+		 * ------------------------------------------------------------
+		 * Resize policy
+		 *
+		 * Normal textures:
+		 *     resize to original Texture2D dimensions when necessary.
+		 *
+		 * Font textures:
+		 *     NEVER resize automatically.
+		 *
+		 * This reproduces the behavior of the old UAFGJ:
+		 *
+		 *     !FOT && !Atlas -> resize
+		 *     FOT / Atlas    -> preserve PNG dimensions
+		 *
+		 * The new code does not depend on the filename anymore;
+		 * fileKind controls the behavior.
+		 * ------------------------------------------------------------
+		 */
+
+		bool shouldResize = !isFontTexture;
+
+		DisplayStr($"[PNG] Importing '{Path.GetFileName(png)}' " + $"as {fmt}, " +
+				   $"original={originalWidth}x{originalHeight}, " + $"kind='{fileKind}', " +
+				   $"fontTexture={isFontTexture}, " + $"resize={shouldResize}.");
 
 		byte[] encoded;
 
@@ -92,15 +124,44 @@ partial class Program
 
 		if (encoded == null || encoded.Length == 0)
 		{
-			throw new InvalidDataException($"Texture encoding produced no data for format {fmt}.");
+			throw new InvalidDataException($"Texture encoding produced no data " + $"for format {fmt}.");
+		}
+
+		/*
+		 * ------------------------------------------------------------
+		 * Font atlas dimensions
+		 *
+		 * IMPORTANT:
+		 *
+		 * For PNG_FONT we intentionally allow the dimensions to change.
+		 *
+		 * Example:
+		 *
+		 *     original    = 1024x2048
+		 *     replacement = 2048x2048
+		 *
+		 * This is the expected behavior of the old UAFGJ:
+		 *
+		 *     resize = false
+		 *     width  = PNG width
+		 *     height = PNG height
+		 *
+		 * The dimensions are written back into m_Width/m_Height below.
+		 * ------------------------------------------------------------
+		 */
+
+		if (isFontTexture && (width != originalWidth || height != originalHeight))
+		{
+			DisplayStr($"[PNG_FONT] Atlas dimensions changed: " +
+					   $"{originalWidth}x{originalHeight} -> " + $"{width}x{height}.");
 		}
 
 		/*
 		 * ------------------------------------------------------------
 		 * StreamData
 		 *
-		 * We are embedding the image data directly into the asset,
-		 * so the external .resS reference must be cleared.
+		 * Image data is embedded directly in the asset.
+		 * Therefore the external .resS reference is cleared.
 		 * ------------------------------------------------------------
 		 */
 
@@ -109,9 +170,7 @@ partial class Program
 		if (streamData != null && !streamData.IsDummy)
 		{
 			AssetTypeValueField offsetField = streamData["offset"];
-
 			AssetTypeValueField sizeField = streamData["size"];
-
 			AssetTypeValueField pathField = streamData["path"];
 
 			if (offsetField != null && !offsetField.IsDummy)
@@ -119,15 +178,27 @@ partial class Program
 				switch (offsetField.TemplateField.ValueType)
 				{
 					case AssetValueType.Int64:
+
 						offsetField.AsLong = 0;
+
 						break;
 
 					case AssetValueType.UInt64:
+
 						offsetField.AsULong = 0;
+
+						break;
+
+					case AssetValueType.UInt32:
+
+						offsetField.AsUInt = 0;
+
 						break;
 
 					default:
+
 						offsetField.AsInt = 0;
+
 						break;
 				}
 			}
@@ -137,48 +208,51 @@ partial class Program
 				switch (sizeField.TemplateField.ValueType)
 				{
 					case AssetValueType.Int64:
+
 						sizeField.AsLong = 0;
+
 						break;
 
 					case AssetValueType.UInt64:
+
 						sizeField.AsULong = 0;
+
 						break;
 
 					case AssetValueType.UInt32:
+
 						sizeField.AsUInt = 0;
+
 						break;
 
 					default:
+
 						sizeField.AsInt = 0;
+
 						break;
 				}
 			}
 
 			if (pathField != null && !pathField.IsDummy)
-			{
 				pathField.AsString = string.Empty;
-			}
 		}
 
 		/*
 		 * ------------------------------------------------------------
 		 * Mipmap settings
+		 *
+		 * Keep the old UAFGJ behavior:
+		 *
+		 *     m_MipCount = 1
+		 *
+		 * We deliberately do NOT modify m_MipMap here.
 		 * ------------------------------------------------------------
 		 */
 
 		AssetTypeValueField mipCountField = atvf["m_MipCount"];
 
 		if (mipCountField != null && !mipCountField.IsDummy)
-		{
 			mipCountField.AsInt = 1;
-		}
-
-		AssetTypeValueField mipMapField = atvf["m_MipMap"];
-
-		if (mipMapField != null && !mipMapField.IsDummy)
-		{
-			mipMapField.AsBool = false;
-		}
 
 		/*
 		 * ------------------------------------------------------------
@@ -209,6 +283,17 @@ partial class Program
 		/*
 		 * ------------------------------------------------------------
 		 * Dimensions
+		 *
+		 * IMPORTANT:
+		 *
+		 * For PNG:
+		 *     dimensions are normally the original dimensions
+		 *     after optional resize.
+		 *
+		 * For PNG_FONT:
+		 *     dimensions are the actual PNG dimensions.
+		 *
+		 * This is exactly what the old importer did.
 		 * ------------------------------------------------------------
 		 */
 
@@ -249,6 +334,7 @@ partial class Program
 			 * Compatibility fallback for TypeTrees where image data
 			 * is exposed as an array node.
 			 */
+
 			imageDataField.AsArray = new AssetTypeArrayInfo(encoded.Length);
 
 			var children = new List<AssetTypeValueField>(encoded.Length);
@@ -256,6 +342,11 @@ partial class Program
 			for (int i = 0; i < encoded.Length; i++)
 			{
 				AssetTypeValueField child = ValueBuilder.DefaultValueFieldFromArrayTemplate(imageDataField);
+
+				if (child == null)
+				{
+					throw new InvalidDataException($"ValueBuilder returned null for image data byte {i}.");
+				}
 
 				child.AsByte = encoded[i];
 
@@ -282,43 +373,79 @@ partial class Program
 		using Image<Rgba32> image = Image.Load<Rgba32>(file);
 
 		width = image.Width;
-
 		height = image.Height;
+
+		/*
+		 * ------------------------------------------------------------
+		 * Generic texture resize
+		 *
+		 * PNG_FONT passes resize=false, therefore the PNG dimensions
+		 * are preserved exactly.
+		 * ------------------------------------------------------------
+		 */
 
 		if (resize && originalWidth > 0 && originalHeight > 0 &&
 			(originalWidth != width || originalHeight != height))
 		{
+			DisplayStr($"[PNG] Resizing replacement " + $"{width}x{height} -> " +
+					   $"{originalWidth}x{originalHeight}.");
+
 			image.Mutate(x => x.Resize(originalWidth, originalHeight));
 
 			width = originalWidth;
-
 			height = originalHeight;
 		}
 
 		/*
-		 * Preserve the orientation used by the old importer.
+		 * Preserve the orientation used by the existing importer.
 		 */
 		image.Mutate(x => x.Flip(FlipMode.Vertical));
 
 		byte[] rgba = new byte[checked(width * height * 4)];
 
-		image.CopyPixelDataTo(rgba);
+		/*
+		 * ------------------------------------------------------------
+		 * Alpha8
+		 *
+		 * AssetsTools.NET's Alpha8 encoder consumes the alpha byte
+		 * from each RGBA pixel.
+		 *
+		 * Therefore:
+		 *
+		 *   constant PNG alpha
+		 *       -> use grayscale R
+		 *
+		 *   varying PNG alpha
+		 *       -> preserve PNG alpha
+		 *
+		 * The selected value is copied into A.
+		 * ------------------------------------------------------------
+		 */
 
-		TextureFile textureFile = new TextureFile
+		if (format == TextureFormat.Alpha8)
 		{
-			m_Width = width,
+			BuildAlpha8SourceRgba(image, rgba);
 
-			m_Height = height,
+			DisplayStr($"[PNG] Prepared Alpha8 source " + $"from '{Path.GetFileName(file)}' " +
+					   $"({width}x{height}).");
+		}
+		else
+		{
+			image.CopyPixelDataTo(rgba);
+		}
 
-			m_TextureFormat = (int)format,
+		TextureFile textureFile =
+			new TextureFile
+			{
+				m_Width = width,
+				m_Height = height,
+				m_TextureFormat = (int)format,
+				m_MipCount = 1,
+				m_MipMap = false
+			};
 
-			m_MipCount = 1,
-
-			m_MipMap = false
-		};
-
-		DisplayStr($"[PNG] Encoding raw RGBA as {format} " + $"({width}x{height}) using " +
-				   $"AssetsTools.NET.Texture...");
+		DisplayStr($"[PNG] Encoding raw RGBA as " + $"{format} ({width}x{height}) " +
+				   "using AssetsTools.NET.Texture...");
 
 		textureFile.EncodeTextureRaw(rgba, width, height, quality: 5, useBgra: false);
 
@@ -326,17 +453,135 @@ partial class Program
 
 		if (encoded == null || encoded.Length == 0)
 		{
-			throw new InvalidDataException($"AssetsTools.NET failed to encode " +
-										   $"texture as {format}.");
+			throw new InvalidDataException($"AssetsTools.NET failed to encode texture as {format}.");
 		}
 
+		/*
+		 * Always use dimensions returned by TextureFile.
+		 */
 		width = textureFile.m_Width;
-
 		height = textureFile.m_Height;
 
 		DisplayStr($"[PNG] AssetsTools.NET produced " + $"{encoded.Length:N0} bytes.");
 
 		return encoded;
+	}
+
+	// ================================================================
+	// ALPHA8 SOURCE BUILDER
+	// ================================================================
+
+	private static void BuildAlpha8SourceRgba(Image<Rgba32> image, byte[] rgba)
+	{
+		if (image == null)
+			throw new ArgumentNullException(nameof(image));
+
+		if (rgba == null)
+			throw new ArgumentNullException(nameof(rgba));
+
+		int width = image.Width;
+		int height = image.Height;
+
+		int expectedLength = checked(width * height * 4);
+
+		if (rgba.Length != expectedLength)
+		{
+			throw new ArgumentException($"Alpha8 RGBA buffer has invalid size: " +
+											$"actual={rgba.Length}, " + $"expected={expectedLength}.",
+										nameof(rgba));
+		}
+
+		/*
+		 * ------------------------------------------------------------
+		 * Determine whether PNG alpha contains useful information.
+		 *
+		 * Many grayscale PNGs use:
+		 *
+		 *     RGB = grayscale
+		 *     A   = 255
+		 *
+		 * In that situation Alpha8 must use R rather than A.
+		 *
+		 * If alpha varies, preserve alpha.
+		 * ------------------------------------------------------------
+		 */
+
+		bool alphaHasVariation = false;
+
+		byte firstAlpha = 0;
+		bool firstPixel = true;
+
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				Rgba32 pixel = image[x, y];
+
+				if (firstPixel)
+				{
+					firstAlpha = pixel.A;
+					firstPixel = false;
+				}
+				else if (pixel.A != firstAlpha)
+				{
+					alphaHasVariation = true;
+					break;
+				}
+			}
+
+			if (alphaHasVariation)
+				break;
+		}
+
+		if (alphaHasVariation)
+		{
+			DisplayStr("[PNG] Alpha8 source mode: using PNG alpha channel.");
+		}
+		else
+		{
+			DisplayStr("[PNG] Alpha8 source mode: using grayscale/R channel.");
+		}
+
+		/*
+		 * ------------------------------------------------------------
+		 * Build explicit RGBA buffer.
+		 *
+		 * The desired Alpha8 byte is copied into A.
+		 * ------------------------------------------------------------
+		 */
+
+		int outputOffset = 0;
+
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				Rgba32 pixel = image[x, y];
+
+				byte value;
+
+				if (alphaHasVariation)
+				{
+					value = pixel.A;
+				}
+				else
+				{
+					/*
+					 * Grayscale atlas:
+					 * use R so A=255 does not become an all-white
+					 * Alpha8 texture.
+					 */
+					value = pixel.R;
+				}
+
+				rgba[outputOffset + 0] = value;
+				rgba[outputOffset + 1] = value;
+				rgba[outputOffset + 2] = value;
+				rgba[outputOffset + 3] = value;
+
+				outputOffset += 4;
+			}
+		}
 	}
 
 	// ================================================================
@@ -349,7 +594,6 @@ partial class Program
 		using Image<Rgba32> image = Image.Load<Rgba32>(file);
 
 		width = image.Width;
-
 		height = image.Height;
 
 		if (resize && originalWidth > 0 && originalHeight > 0 &&
@@ -358,7 +602,6 @@ partial class Program
 			image.Mutate(x => x.Resize(originalWidth, originalHeight));
 
 			width = originalWidth;
-
 			height = originalHeight;
 		}
 
@@ -368,7 +611,7 @@ partial class Program
 
 		image.CopyPixelDataTo(rgba);
 
-		DisplayStr($"[DXT1] Encoding " + $"{width}x{height} " + $"RGBA32 -> BC1/DXT1...");
+		DisplayStr($"[DXT1] Encoding " + $"{width}x{height} " + "RGBA32 -> BC1/DXT1...");
 
 		byte[] encoded = EncodeDxt1(rgba, width, height);
 
@@ -400,7 +643,6 @@ partial class Program
 		using Image<Rgba32> image = Image.Load<Rgba32>(file);
 
 		width = image.Width;
-
 		height = image.Height;
 
 		if (resize && originalWidth > 0 && originalHeight > 0 &&
@@ -409,7 +651,6 @@ partial class Program
 			image.Mutate(x => x.Resize(originalWidth, originalHeight));
 
 			width = originalWidth;
-
 			height = originalHeight;
 		}
 
@@ -419,7 +660,7 @@ partial class Program
 
 		image.CopyPixelDataTo(rgba);
 
-		DisplayStr($"[DXT5] Encoding " + $"{width}x{height} " + $"RGBA32 -> BC3/DXT5...");
+		DisplayStr($"[DXT5] Encoding " + $"{width}x{height} " + "RGBA32 -> BC3/DXT5...");
 
 		byte[] encoded = EncodeDxt5(rgba, width, height);
 
@@ -452,7 +693,7 @@ partial class Program
 
 		if (rgba.Length < checked(width * height * 4))
 		{
-			throw new ArgumentException("RGBA buffer is smaller than " + "width*height*4.", nameof(rgba));
+			throw new ArgumentException("RGBA buffer is smaller than width*height*4.", nameof(rgba));
 		}
 
 		int blocksX = (width + 3) / 4;
@@ -694,7 +935,6 @@ partial class Program
 					if (distance < bestDistance)
 					{
 						bestDistance = distance;
-
 						bestIndex = p;
 					}
 				}
@@ -731,7 +971,7 @@ partial class Program
 
 		if (rgba.Length < checked(width * height * 4))
 		{
-			throw new ArgumentException("RGBA buffer is smaller than " + "width*height*4.", nameof(rgba));
+			throw new ArgumentException("RGBA buffer is smaller than width*height*4.", nameof(rgba));
 		}
 
 		int blocksX = (width + 3) / 4;
@@ -793,19 +1033,15 @@ partial class Program
 		}
 
 		/*
-		 * ------------------------------------------------------------
 		 * Alpha block = 8 bytes
-		 * ------------------------------------------------------------
 		 */
 		EncodeDxt5AlphaBlock(a, output, outputOffset);
 
 		/*
-		 * ------------------------------------------------------------
-		 * Color block = normal DXT1 color portion
+		 * Color block = DXT1 color portion.
 		 *
-		 * DXT5 always uses the opaque four-color DXT1 mode for color.
-		 * Alpha belongs exclusively to the first 8 bytes.
-		 * ------------------------------------------------------------
+		 * DXT5 always uses the opaque DXT1 color mode.
+		 * Alpha is stored separately in the first 8 bytes.
 		 */
 		BuildDxt1ColorBlock(r, g, b, a, false, output, outputOffset + 8);
 	}
@@ -817,11 +1053,9 @@ partial class Program
 	private static void EncodeDxt5AlphaBlock(Span<byte> alpha, byte[] output, int outputOffset)
 	{
 		byte alpha0 = 0;
-
 		byte alpha1 = 255;
 
 		int minAlpha = 255;
-
 		int maxAlpha = 0;
 
 		for (int i = 0; i < 16; i++)
@@ -836,10 +1070,9 @@ partial class Program
 		}
 
 		/*
-		 * Use the observed extrema as endpoints.
+		 * Use observed extrema as endpoints.
 		 */
 		alpha0 = (byte)maxAlpha;
-
 		alpha1 = (byte)minAlpha;
 
 		/*
@@ -851,10 +1084,7 @@ partial class Program
 		 * alpha0 <= alpha1:
 		 *   6 alpha values + 0 + 255
 		 *
-		 * We normally use the 8-value mode because it provides better
-		 * precision for ordinary textures.
-		 *
-		 * Force a valid strictly descending pair.
+		 * Prefer the 8-value mode.
 		 */
 		if (alpha0 == alpha1)
 		{
@@ -872,19 +1102,8 @@ partial class Program
 		Span<int> palette = stackalloc int[8];
 
 		palette[0] = alpha0;
-
 		palette[1] = alpha1;
 
-		/*
-		 * Because alpha0 > alpha1:
-		 *
-		 * a2 = 6/7 a0 + 1/7 a1
-		 * a3 = 5/7 a0 + 2/7 a1
-		 * a4 = 4/7 a0 + 3/7 a1
-		 * a5 = 3/7 a0 + 4/7 a1
-		 * a6 = 2/7 a0 + 5/7 a1
-		 * a7 = 1/7 a0 + 6/7 a1
-		 */
 		palette[2] = (6 * alpha0 + alpha1) / 7;
 
 		palette[3] = (5 * alpha0 + 2 * alpha1) / 7;
@@ -905,7 +1124,7 @@ partial class Program
 		output[outputOffset + 1] = alpha1;
 
 		/*
-		 * Six bytes hold 16 × 3-bit indices.
+		 * Six bytes hold 16 x 3-bit indices.
 		 */
 		ulong indices = 0;
 
@@ -924,7 +1143,6 @@ partial class Program
 				if (distance < bestDistance)
 				{
 					bestDistance = distance;
-
 					bestIndex = p;
 				}
 			}
@@ -959,7 +1177,7 @@ partial class Program
 	//   - RGBA combinato
 	//   - endpoint RGBAP 7.7.7.7.1
 	//   - 16 indici da 4 bit
-	//   - indice 0 con 3 bit effettivi (fix-up bit implicito)
+	//   - indice 0 con 3 bit effettivi
 	//
 	// Layout:
 	//   mode      = 7 bits
@@ -979,7 +1197,6 @@ partial class Program
 		using Image<Rgba32> image = Image.Load<Rgba32>(file);
 
 		width = image.Width;
-
 		height = image.Height;
 
 		if (resize && originalWidth > 0 && originalHeight > 0 &&
@@ -988,7 +1205,6 @@ partial class Program
 			image.Mutate(x => x.Resize(originalWidth, originalHeight));
 
 			width = originalWidth;
-
 			height = originalHeight;
 		}
 
@@ -1002,8 +1218,8 @@ partial class Program
 
 		image.CopyPixelDataTo(rgba);
 
-		DisplayStr($"[BC7] Encoding " + $"{width}x{height} " + $"RGBA32 -> BC7 Mode 6 " +
-				   $"(managed, no external encoder)...");
+		DisplayStr($"[BC7] Encoding " + $"{width}x{height} " + "RGBA32 -> BC7 Mode 6 " +
+				   "(managed, no external encoder)...");
 
 		byte[] encoded = EncodeBC7Mode6(rgba, width, height);
 
@@ -1020,7 +1236,7 @@ partial class Program
 		}
 
 		DisplayStr($"[BC7] Encoded successfully: " + $"{encoded.Length:N0} bytes " +
-				   $"({blocksX}x{blocksY} blocks, " + $"Mode 6).");
+				   $"({blocksX}x{blocksY} blocks, " + "Mode 6).");
 
 		return encoded;
 	}
@@ -1043,7 +1259,7 @@ partial class Program
 
 		if (rgba.Length < requiredBytes)
 		{
-			throw new ArgumentException("RGBA buffer is smaller than " + "width*height*4.", nameof(rgba));
+			throw new ArgumentException("RGBA buffer is smaller than width*height*4.", nameof(rgba));
 		}
 
 		int blocksX = (width + 3) / 4;
@@ -1113,12 +1329,9 @@ partial class Program
 		 * Initial endpoints
 		 *
 		 * Mode 6 has one endpoint pair.
-		 * We use the per-channel bounding box:
 		 *
 		 * endpoint 0 = minima
 		 * endpoint 1 = maxima
-		 *
-		 * This is intentionally simple and deterministic.
 		 * ------------------------------------------------------------
 		 */
 
@@ -1183,23 +1396,15 @@ partial class Program
 										out int pa);
 
 				int dr = r[i] - pr;
-
 				int dg = g[i] - pg;
-
 				int db = b[i] - pb;
-
 				int da = a[i] - pa;
 
-				/*
-				 * Alpha ha lo stesso peso di RGB.
-				 * Il calcolo rimane ampiamente entro int.
-				 */
 				int error = checked(dr * dr + dg * dg + db * db + da * da);
 
 				if (error < bestError)
 				{
 					bestError = error;
-
 					bestIndex = index;
 				}
 			}
@@ -1211,16 +1416,10 @@ partial class Program
 		 * ------------------------------------------------------------
 		 * BC7 Mode 6 fix-up
 		 *
-		 * L'indice del texel 0 deve avere MSB = 0.
-		 * Con indici a 4 bit significa:
+		 * Index 0 must have MSB = 0.
+		 * Therefore index[0] must be <= 7.
 		 *
-		 *     index[0] <= 7
-		 *
-		 * Se non lo è, invertiamo endpoint e indici:
-		 *
-		 *     index' = 15 - index
-		 *
-		 * mantenendo identica la palette.
+		 * If it is >= 8, swap endpoints and invert all indices.
 		 * ------------------------------------------------------------
 		 */
 
@@ -1237,8 +1436,6 @@ partial class Program
 		/*
 		 * ------------------------------------------------------------
 		 * Serialize 128-bit BC7 block.
-		 *
-		 * BC7 uses an LSB-first bitstream.
 		 * ------------------------------------------------------------
 		 */
 
@@ -1251,13 +1448,12 @@ partial class Program
 		/*
 		 * Mode 6:
 		 *
-		 * 0000001 if viewed MSB-first,
-		 * therefore numerical bit pattern = 1 << 6.
+		 * numerical bit pattern = 1 << 6.
 		 */
 		WriteBC7Bits(block, ref bitOffset, 1u << 6, 7);
 
 		/*
-		 * Endpoint channel order is:
+		 * Endpoint order:
 		 *
 		 * R0 R1
 		 * G0 G1
@@ -1290,7 +1486,7 @@ partial class Program
 
 		/*
 		 * Fix-up index 0:
-		 * only the lower 3 bits are physically stored.
+		 * only lower 3 bits are stored.
 		 */
 		WriteBC7Bits(block, ref bitOffset, indices[0], 3);
 
@@ -1331,17 +1527,6 @@ partial class Program
 	// ================================================================
 	// BC7 ENDPOINT QUANTIZATION
 	// ================================================================
-	//
-	// Mode 6 stores 7 bits + one P-bit for each endpoint.
-	//
-	// Reconstructed 8-bit component:
-	//
-	//     reconstructed = (stored7 << 1) | P
-	//
-	// The P-bit is shared by R/G/B/A of the same endpoint,
-	// so we test both possible P values and choose the one with
-	// the smallest total endpoint error.
-	// ================================================================
 
 	private static Bc7Endpoint QuantizeBC7Endpoint(int r, int g, int b, int a)
 	{
@@ -1368,11 +1553,8 @@ partial class Program
 			int aa = (a7 << 1) | p;
 
 			long dr = r - rr;
-
 			long dg = g - gg;
-
 			long db = b - bb;
-
 			long da = a - aa;
 
 			long error = dr * dr + dg * dg + db * db + da * da;
@@ -1382,21 +1564,14 @@ partial class Program
 				bestError = error;
 
 				best.R7 = r7;
-
 				best.G7 = g7;
-
 				best.B7 = b7;
-
 				best.A7 = a7;
-
 				best.P = p;
 
 				best.R = rr;
-
 				best.G = gg;
-
 				best.B = bb;
-
 				best.A = aa;
 			}
 		}
@@ -1411,8 +1586,7 @@ partial class Program
 		 *
 		 *     (7-bit << 1) | p
 		 *
-		 * We use integer arithmetic to avoid floating point
-		 * differences.
+		 * Integer arithmetic avoids floating-point differences.
 		 */
 		int q = (value - p + 1) / 2;
 
@@ -1433,14 +1607,6 @@ partial class Program
 												int index, out int r, out int g, out int b,
 												out int a)
 	{
-		/*
-		 * BC7 4-bit interpolation weights.
-		 *
-		 * Index:
-		 *  0  1  2  3  4  5  6  7
-		 *  8  9 10 11 12 13 14 15
-		 */
-
 		int w = Bc7Weights4[index];
 
 		r = ((64 - w) * endpoint0.R + w * endpoint1.R + 32) >> 6;

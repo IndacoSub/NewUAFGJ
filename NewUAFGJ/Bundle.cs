@@ -93,25 +93,33 @@ namespace UAFGJ
 		private static string ResolveEffectiveFileKind(string requestedKind, int targetTypeId,
 													   string inputFile)
 		{
+			requestedKind = requestedKind?.Trim() ?? "";
+
 			// ============================================================
 			// PNG / TEXTURE2D
 			// ============================================================
 
 			if (IsPngReplacement(inputFile))
 			{
-				DebugStr($"[CHECK] PNG replacement detected for " + $"TypeID={targetTypeId}; " +
-						 "skipping TXT fileKind resolution.");
+				DebugStr($"[CHECK] PNG replacement detected for TypeID={targetTypeId}.");
 
 				if (targetTypeId != 28)
 				{
-					throw new InvalidDataException($"[FATAL] PNG replacement requires Texture2D " +
-												   $"TypeID=28, but target TypeID={targetTypeId}.");
+					throw new InvalidDataException($"[FATAL] PNG replacement requires Texture2D TypeID=28, " +
+												   $"but target TypeID={targetTypeId}.");
+				}
+
+				if (string.Equals(requestedKind, "PNG_FONT", StringComparison.OrdinalIgnoreCase))
+				{
+					DebugStr("[CHECK] Explicit Texture2D font replacement -> PNG_FONT.");
+
+					return "PNG_FONT";
 				}
 
 				return "PNG";
 			}
 
-			string normalizedRequestedKind = requestedKind?.Trim() ?? "";
+			string normalizedRequestedKind = requestedKind;
 
 			// ============================================================
 			// TMP_FONT AS MONOBEHAVIOUR
@@ -540,8 +548,8 @@ namespace UAFGJ
 				DebugStr($"[DISCOVERY] TARGET MATCH DATA: " + $"replacementBytes=" +
 						 $"{(tempReplacementData?.Length ?? 0)}, " +
 						 $"replacementSHA=" + $"{(tempReplacementData != null
-								? Sha256Hex(tempReplacementData)
-								: "<null>")}");
+												? Sha256Hex(tempReplacementData)
+												: "<null>")}");
 
 				// ============================================================
 				// FIRST REAL MATCH
@@ -629,8 +637,8 @@ namespace UAFGJ
 			DebugStr($"[CHECK] classdata.tpk='{classDataPath}'");
 
 			DebugStr($"[CHECK] classdata.tpk SHA256=" + $"{(File.Exists(classDataPath)
-						  ? Sha256File(classDataPath)
-						  : "MISSING")}");
+									  ? Sha256File(classDataPath)
+									  : "MISSING")}");
 
 			string tempBundlePath = ab + ".uafgj_stage1_" + Guid.NewGuid().ToString("N") + ".tmp";
 
@@ -785,8 +793,8 @@ namespace UAFGJ
 					DebugStr($"[TXT] Replacement prepared by bundle-wide target search: " +
 							 $"bytes={rawReplacementData?.Length ?? 0}, " +
 							 $"SHA256=" + $"{(rawReplacementData == null
-									  ? "<null>"
-									  : Sha256Hex(rawReplacementData))}");
+														  ? "<null>"
+														  : Sha256Hex(rawReplacementData))}");
 				}
 
 				// ====================================================
@@ -852,8 +860,8 @@ namespace UAFGJ
 				int expectedTargetTypeId = afie.TypeId;
 
 				DebugStr($"[CHECK] Replacement mode=" + $"{(isTextReplacement
-								? "TXT"
-								: "PNG/GenericAsset")}, " +
+												? "TXT"
+												: "PNG/GenericAsset")}, " +
 						 $"PID={afie.PathId}, " + $"TypeID={expectedTargetTypeId}");
 
 				// ====================================================
@@ -1587,7 +1595,7 @@ namespace UAFGJ
 					throw new InvalidDataException("[FATAL] Bundle could not be reopened: " + bundlePath);
 				}
 
-				AssetBundleCompressionType compression = bundle.file.GetCompressionType();
+				AssetBundleCompressionType compression = bundle.originalCompression;
 
 				int dirCount = bundle.file.BlockAndDirInfo.DirectoryInfos.Count;
 
@@ -1595,8 +1603,9 @@ namespace UAFGJ
 
 				DebugStr($"[CHECK] Signature={bundle.file.Header.Signature}, " +
 						 $"UnityVersion={bundle.file.Header.EngineVersion}, " +
-						 $"compression={compression}, " + $"dirs={dirCount}, " +
-						 $"blocks={bundle.file.BlockAndDirInfo.BlockInfos.Length}");
+						 $"compression(on-disk)={compression}, " +
+						 $"workingRepresentation={bundle.file.GetCompressionType()}, " +
+						 $"dirs={dirCount}, " + $"blocks={bundle.file.BlockAndDirInfo.BlockInfos.Length}");
 
 				int assetsCount = 0;
 
@@ -1795,11 +1804,30 @@ namespace UAFGJ
 				// ====================================================
 				// CONTAINER VALIDATION
 				// ====================================================
+				//
+				// LoadBundleFile(..., true) automatically unpacks a compressed
+				// bundle into bundle.file.
+				//
+				// Therefore:
+				//
+				//     bundle.file.GetCompressionType()
+				//         -> reports the WORKING unpacked representation
+				//
+				// while:
+				//
+				//     bundle.originalCompression
+				//         -> reports the actual compression of the file on disk.
+				//
+				// The latter is what must be compared with originalCompression.
+				//
 
-				AssetBundleCompressionType finalCompression = bundle.file.GetCompressionType();
+				AssetBundleCompressionType finalCompression = bundle.originalCompression;
 
 				var finalDirectoryNames =
 					bundle.file.BlockAndDirInfo.DirectoryInfos.Select(d => d.Name).ToList();
+
+				DebugStr($"[CHECK] Final bundle compression on disk=" + $"{finalCompression}; " +
+						 $"working representation compression=" + $"{bundle.file.GetCompressionType()}.");
 
 				if (finalCompression != originalCompression)
 				{
@@ -2211,10 +2239,14 @@ namespace UAFGJ
 															   "a valid BaseField.");
 							}
 
-							ValidateFontDumpAgainstBaseField(dumpPath, targetField);
+							ValidateTmpFontDumpAgainstBaseField(
+								dumpPath,
+								targetField);
 
-							DebugStr("[CHECK] MONOBEHAVIOUR_FONT_CHECKED: " +
-									 "partial Font payload + structural validation PASSED.");
+							DebugStr(
+								"[CHECK] MONOBEHAVIOUR_FONT_CHECKED: " +
+								"partial TMP Font payload + " +
+								"TMP-specific validation PASSED.");
 
 							return;
 						}
@@ -2710,7 +2742,7 @@ namespace UAFGJ
 				string offsetText = offsets.Count == 0 ? "<none>" : string.Join(", ", offsets.Take(20));
 
 				DebugStr($"[FLOAT DEBUG] value={value.ToString(
-									System.Globalization.CultureInfo.InvariantCulture)}, " +
+													System.Globalization.CultureInfo.InvariantCulture)}, " +
 						 $"bytes={Convert.ToHexString(pattern)}, " + $"count={offsets.Count}, " +
 						 $"offsets={offsetText}");
 			}

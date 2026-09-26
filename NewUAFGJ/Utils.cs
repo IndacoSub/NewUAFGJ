@@ -1871,6 +1871,15 @@ namespace UAFGJ
 
 			AssetValueType fieldType = GetFieldValueType(arrayField);
 
+			// ------------------------------------------------------------
+			// Some AssetsTools.NET fields are wrappers exposing:
+			//
+			//     m_Something
+			//       Array
+			//
+			// Resolve the actual Array node.
+			// ------------------------------------------------------------
+
 			if (fieldType != AssetValueType.Array)
 			{
 				AssetTypeValueField explicitArray = FindDirectChildByName(arrayField, "Array");
@@ -1904,28 +1913,66 @@ namespace UAFGJ
 				arrayField.Children = new List<AssetTypeValueField>();
 			}
 
-			if (arrayField.Children.Count == expectedCount)
+			int currentCount = arrayField.Children.Count;
+
+			// ------------------------------------------------------------
+			// NOTHING TO DO
+			// ------------------------------------------------------------
+
+			if (currentCount == expectedCount)
 			{
 				return;
 			}
 
-			var newChildren = new List<AssetTypeValueField>(expectedCount);
+			// ------------------------------------------------------------
+			// SHRINK
+			//
+			// IMPORTANT:
+			//
+			// DO NOT recreate existing elements.
+			//
+			// Preserve the first N original AssetTypeValueField objects
+			// and remove only the trailing elements.
+			//
+			// This is especially important for TMP_Glyph arrays.
+			// ------------------------------------------------------------
 
-			for (int i = 0; i < expectedCount; i++)
+			if (expectedCount < currentCount)
+			{
+				int removeCount = currentCount - expectedCount;
+
+				DebugStr($"[TXT] Shrinking array in-place: " + $"current={currentCount}, " +
+						 $"new={expectedCount}, " + $"remove={removeCount}");
+
+				arrayField.Children.RemoveRange(expectedCount, removeCount);
+
+				return;
+			}
+
+			// ------------------------------------------------------------
+			// GROW
+			//
+			// Existing elements remain untouched.
+			// Only the additional elements are generated.
+			// ------------------------------------------------------------
+
+			int addCount = expectedCount - currentCount;
+
+			DebugStr($"[TXT] Growing array: " + $"current={currentCount}, " + $"new={expectedCount}, " +
+					 $"add={addCount}");
+
+			for (int i = 0; i < addCount; i++)
 			{
 				AssetTypeValueField newItem = ValueBuilder.DefaultValueFieldFromArrayTemplate(arrayField);
 
 				if (newItem == null)
 				{
 					throw new InvalidDataException("ValueBuilder returned null while creating " +
-												   $"array element {i}.");
+												   $"array element {currentCount + i}.");
 				}
 
-				newChildren.Add(newItem);
+				arrayField.Children.Add(newItem);
 			}
-
-			arrayField.Children.Clear();
-			arrayField.Children.AddRange(newChildren);
 		}
 
 		private static void SynchronizeFontDumpArrayStructure(string inputFile,
@@ -1933,134 +1980,35 @@ namespace UAFGJ
 		{
 			if (baseField == null || baseField.IsDummy)
 			{
-				throw new InvalidDataException("Unity Font BaseField is null or dummy.");
+				throw new InvalidDataException("TMP_FontAsset BaseField is null or dummy.");
 			}
 
 			Dictionary<string, DumpArrayInfo> dumpArrays =
 				BuildUniqueDumpArrayInfoMap(ReadDumpArrayInfos(inputFile));
 
+			DebugStr($"[FONT] Partial dump contains " +
+					 $"{dumpArrays.Count} explicit array structure(s).");
+
 			// ------------------------------------------------------------
-			// FIRST:
-			// Apply the exact sizes declared by the dump.
+			// Only arrays explicitly present in the dump are synchronized.
+			//
+			// IMPORTANT:
+			//
+			// Missing arrays are NOT cleared.
+			//
+			// This is a genuine partial-dump behavior.
 			// ------------------------------------------------------------
 
-			if (dumpArrays.Count > 0)
+			if (dumpArrays.Count == 0)
 			{
-				SynchronizeDumpArrayStructure(inputFile, baseField, ReadDumpScalars(inputFile), true);
-			}
-
-			// ------------------------------------------------------------
-			// SECOND:
-			// Clear Font arrays that are NOT present in the dump.
-			//
-			// This is intentional:
-			//
-			//   omitted array == array must stay removed
-			//
-			// We do NOT keep the original contents.
-			// ------------------------------------------------------------
-
-			if (baseField.Children == null)
-			{
+				DebugStr("[FONT] No explicit arrays found in partial dump.");
 				return;
 			}
 
-			foreach (AssetTypeValueField child in baseField.Children.ToList())
-			{
-				if (child == null || child.IsDummy)
-				{
-					continue;
-				}
-
-				string fieldName = child.TemplateField?.Name ?? "";
-
-				if (string.IsNullOrEmpty(fieldName))
-				{
-					continue;
-				}
-
-				// --------------------------------------------------------
-				// Normal direct array:
-				//
-				// m_Something
-				//   Array ...
-				// --------------------------------------------------------
-
-				AssetTypeValueField directArray = null;
-
-				try
-				{
-					if (GetFieldValueType(child) == AssetValueType.Array)
-					{
-						directArray = child;
-					}
-				}
-				catch
-				{
-				}
-
-				// --------------------------------------------------------
-				// AssetsTools.NET may expose Unity vectors/maps as:
-				//
-				// m_Something
-				//   Array
-				//      ...
-				//
-				// In that case the actual array is the "Array" child.
-				// --------------------------------------------------------
-
-				if (directArray == null)
-				{
-					AssetTypeValueField arrayWrapper = FindDirectChildByName(child, "Array");
-
-					if (arrayWrapper != null && !arrayWrapper.IsDummy)
-					{
-						try
-						{
-							if (GetFieldValueType(arrayWrapper) == AssetValueType.Array)
-							{
-								directArray = arrayWrapper;
-							}
-						}
-						catch
-						{
-						}
-					}
-				}
-
-				if (directArray == null)
-				{
-					continue;
-				}
-
-				// Byte arrays are not what we want to clear here.
-				if (IsTemplateByteArray(directArray))
-				{
-					continue;
-				}
-
-				bool existsInDump = dumpArrays.ContainsKey(fieldName);
-
-				if (!existsInDump)
-				{
-					int oldCount = directArray.Children?.Count ?? 0;
-
-					DebugStr($"[FONT] Clearing omitted array " +
-							 $"'{fieldName}': " + $"oldCount={oldCount}, " + "dump=ABSENT.");
-
-					if (directArray.Children == null)
-					{
-						directArray.Children = new List<AssetTypeValueField>();
-					}
-					else
-					{
-						directArray.Children.Clear();
-					}
-				}
-			}
+			SynchronizeDumpArrayStructure(inputFile, baseField, ReadDumpScalars(inputFile), true);
 
 			DebugStr($"[FONT] Font array synchronization completed. " +
-					 $"Dump arrays={dumpArrays.Count}.");
+					 $"Explicit dump arrays={dumpArrays.Count}.");
 		}
 
 		private static List<DumpTargetMatch> BuildFontDumpTargetMatches(string inputFile,
@@ -2646,8 +2594,8 @@ namespace UAFGJ
 				{
 					DebugStr($"[SPRITE] textureRect BEFORE: " + $"targetPath='{match.Target.Path}', " +
 							 $"field='{fieldName}', " + $"value={target.AsFloat.ToString(
-									  "R",
-									  CultureInfo.InvariantCulture)}");
+												"R",
+												CultureInfo.InvariantCulture)}");
 				}
 				else
 				{
@@ -2722,8 +2670,8 @@ namespace UAFGJ
 				{
 					DebugStr($"[SPRITE] textureRect AFTER: " + $"targetPath='{match.Target.Path}', " +
 							 $"field='{fieldName}', " + $"value={target.AsFloat.ToString(
-									  "R",
-									  CultureInfo.InvariantCulture)}");
+												"R",
+												CultureInfo.InvariantCulture)}");
 				}
 				else
 				{
@@ -3410,8 +3358,8 @@ namespace UAFGJ
 					DebugStr($"[SPRITE] {rectPath}: " +
 							 $"TemplateName='{rectField.TemplateField?.Name ?? "<null>"}', " +
 							 $"ValueType={(rectField.Value != null
-									  ? rectField.Value.ValueType.ToString()
-									  : "<null>")}, " +
+												? rectField.Value.ValueType.ToString()
+												: "<null>")}, " +
 							 $"Children={rectField.Children?.Count ?? 0}");
 
 					AssetTypeValueField xField = FindDirectChildByName(rectField, "x");
@@ -3495,9 +3443,9 @@ namespace UAFGJ
 						if (rectBytes.Length >= 16)
 						{
 							DebugStr($"[SPRITE] {rectPath}: first 16 bytes=" + $"{Convert.ToHexString(
-												  rectBytes,
-												  0,
-												  16)}");
+																rectBytes,
+																0,
+																16)}");
 
 							using (var ms = new MemoryStream(rectBytes)) using (var reader =
 																					new BinaryReader(ms))
@@ -3512,17 +3460,17 @@ namespace UAFGJ
 
 								DebugStr($"[SPRITE] {rectPath}: " + $"raw serialized float sequence: " +
 										 $"x={rawX.ToString(
-														"R",
-														CultureInfo.InvariantCulture)}, " +
+																		"R",
+																		CultureInfo.InvariantCulture)}, " +
 										 $"y={rawY.ToString(
-														"R",
-														CultureInfo.InvariantCulture)}, " +
+																		"R",
+																		CultureInfo.InvariantCulture)}, " +
 										 $"width={rawWidth.ToString(
-														"R",
-														CultureInfo.InvariantCulture)}, " +
+																		"R",
+																		CultureInfo.InvariantCulture)}, " +
 										 $"height={rawHeight.ToString(
-														"R",
-														CultureInfo.InvariantCulture)}");
+																		"R",
+																		CultureInfo.InvariantCulture)}");
 							}
 						}
 					}
