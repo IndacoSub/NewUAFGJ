@@ -15,14 +15,8 @@ namespace UAFGJ
 		// ============================================================
 
 		[DllImport("user32.dll")]
-		static extern bool SetWindowPos(
-			IntPtr hWnd,
-			IntPtr hWndInsertAfter,
-			int X,
-			int Y,
-			int cx,
-			int cy,
-			uint uFlags);
+		static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx,
+										int cy, uint uFlags);
 
 		[DllImport("user32.dll", SetLastError = true)]
 		static extern bool IsWindow(IntPtr hWnd);
@@ -38,7 +32,6 @@ namespace UAFGJ
 
 		const int SM_CXSCREEN = 0;
 		const int SM_CYSCREEN = 1;
-
 
 		// ============================================================
 		// VLC helpers
@@ -61,7 +54,6 @@ namespace UAFGJ
 				Thread.Sleep(100);
 			}
 		}
-
 
 		// ============================================================
 		// MAIN
@@ -86,7 +78,8 @@ namespace UAFGJ
 			{
 				DebugStr("[BOOT] ==================================================");
 				DebugStr("[BOOT] UAFGJ starting.");
-				DebugStr($"[BOOT] PID={Environment.ProcessId}, OS={Environment.OSVersion}, 64bit={Environment.Is64BitProcess}");
+				DebugStr(
+					$"[BOOT] PID={Environment.ProcessId}, OS={Environment.OSVersion}, 64bit={Environment.Is64BitProcess}");
 				DebugStr($"[BOOT] BaseDirectory='{AppContext.BaseDirectory}'");
 				DebugStr($"[BOOT] CurrentDirectory='{Environment.CurrentDirectory}'");
 				DebugStr($"[BOOT] Args count={(args == null ? -1 : args.Length)}");
@@ -100,7 +93,8 @@ namespace UAFGJ
 
 				if (args.Length < 2)
 				{
-					DisplayStr("[FATAL] Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId] [fileId] [fileKind]");
+					DisplayStr("[FATAL] Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId] [fileId] " +
+							   "[fileKind]");
 					Environment.ExitCode = 1;
 					return;
 				}
@@ -181,12 +175,12 @@ namespace UAFGJ
 			}
 		}
 
-
 		// ============================================================
 		// UNHANDLED EXCEPTION
 		// ============================================================
 
-		private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+		private static void CurrentDomain_UnhandledException(object sender,
+															 UnhandledExceptionEventArgs e)
 		{
 			try
 			{
@@ -201,9 +195,8 @@ namespace UAFGJ
 				}
 				else
 				{
-					DisplayStr(
-						"[UNHANDLED] Unhandled non-Exception object detected: " +
-						(e.ExceptionObject?.GetType().FullName ?? "<null>"));
+					DisplayStr("[UNHANDLED] Unhandled non-Exception object detected: " +
+							   (e.ExceptionObject?.GetType().FullName ?? "<null>"));
 
 					DebugStr($"[UNHANDLED] Object={e.ExceptionObject}");
 				}
@@ -214,7 +207,6 @@ namespace UAFGJ
 			{
 			}
 		}
-
 
 		// ============================================================
 		// PROCESS EXIT
@@ -231,17 +223,12 @@ namespace UAFGJ
 			}
 		}
 
-
 		// ============================================================
 		// DOSTUFF
 		// ============================================================
 
-		static private void DoStuff(
-			string assetOrBundle,
-			string inputFile,
-			string specificPathId,
-			string specificFileId,
-			string fileKind)
+		static private void DoStuff(string assetOrBundle, string inputFile, string specificPathId,
+									string specificFileId, string fileKind)
 		{
 			DebugStr("[PHASE] DoStuff: starting file detection.");
 			DebugStr("Opening file: " + assetOrBundle);
@@ -254,9 +241,7 @@ namespace UAFGJ
 			}
 			catch (Exception ex)
 			{
-				DisplayStr(
-					"[FATAL] File type detection failed: " +
-					ex.GetType().Name + ": " + ex.Message);
+				DisplayStr("[FATAL] File type detection failed: " + ex.GetType().Name + ": " + ex.Message);
 
 				DebugStr(ex.ToString());
 
@@ -271,33 +256,19 @@ namespace UAFGJ
 				case DetectedFileType.BundleFile:
 					DebugStr("[PHASE] Dispatching to HandleBundle().");
 
-					HandleBundle(
-						assetOrBundle,
-						inputFile,
-						specificPathId,
-						specificFileId,
-						fileKind);
+					HandleBundle(assetOrBundle, inputFile, specificPathId, specificFileId, fileKind);
 
 					break;
 
 				case DetectedFileType.AssetsFile:
 					DebugStr("[PHASE] Dispatching to HandleAsset().");
 
-					HandleAsset(
-						assetOrBundle,
-						inputFile,
-						specificPathId,
-						specificFileId,
-						fileKind);
+					HandleAsset(assetOrBundle, inputFile, specificPathId, specificFileId, fileKind);
 
 					break;
 
 				default:
-					DisplayStr(
-						"Invalid file type for " +
-						assetOrBundle +
-						": " +
-						fileType);
+					DisplayStr("Invalid file type for " + assetOrBundle + ": " + fileType);
 
 					Environment.ExitCode = 1;
 					break;

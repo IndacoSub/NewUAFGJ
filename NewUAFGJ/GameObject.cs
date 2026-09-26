@@ -21,60 +21,33 @@ namespace UAFGJ
 		//   -> richiede corrispondenza completa degli scalari
 		// ============================================================
 
-		private static bool ImportGameObjectFull(
-			string inputFile,
-			AssetsManager am,
-			AssetFileInfo afie,
-			AssetsFileInstance assetInst,
-			string assetName,
-			out AssetTypeValueField modifiedBaseField,
-			out byte[] replacementData,
-			out byte[] originalSerializedData)
+		private static bool ImportGameObjectFull(string inputFile, AssetsManager am, AssetFileInfo afie,
+												 AssetsFileInstance assetInst, string assetName,
+												 out AssetTypeValueField modifiedBaseField,
+												 out byte[] replacementData,
+												 out byte[] originalSerializedData)
 		{
-			return ImportGameObjectFullInternal(
-				inputFile,
-				am,
-				afie,
-				assetInst,
-				assetName,
-				false,
-				out modifiedBaseField,
-				out replacementData,
-				out originalSerializedData);
+			return ImportGameObjectFullInternal(inputFile, am, afie, assetInst, assetName, false,
+												out modifiedBaseField, out replacementData,
+												out originalSerializedData);
 		}
 
-		private static bool ImportGameObjectFullChecked(
-			string inputFile,
-			AssetsManager am,
-			AssetFileInfo afie,
-			AssetsFileInstance assetInst,
-			string assetName,
-			out AssetTypeValueField modifiedBaseField,
-			out byte[] replacementData,
-			out byte[] originalSerializedData)
+		private static bool ImportGameObjectFullChecked(string inputFile, AssetsManager am,
+														AssetFileInfo afie,
+														AssetsFileInstance assetInst, string assetName,
+														out AssetTypeValueField modifiedBaseField,
+														out byte[] replacementData,
+														out byte[] originalSerializedData)
 		{
-			return ImportGameObjectFullInternal(
-				inputFile,
-				am,
-				afie,
-				assetInst,
-				assetName,
-				true,
-				out modifiedBaseField,
-				out replacementData,
-				out originalSerializedData);
+			return ImportGameObjectFullInternal(inputFile, am, afie, assetInst, assetName, true,
+												out modifiedBaseField, out replacementData,
+												out originalSerializedData);
 		}
 
 		private static bool ImportGameObjectFullInternal(
-			string inputFile,
-			AssetsManager am,
-			AssetFileInfo afie,
-			AssetsFileInstance assetInst,
-			string assetName,
-			bool checkedMode,
-			out AssetTypeValueField modifiedBaseField,
-			out byte[] replacementData,
-			out byte[] originalSerializedData)
+			string inputFile, AssetsManager am, AssetFileInfo afie, AssetsFileInstance assetInst,
+			string assetName, bool checkedMode, out AssetTypeValueField modifiedBaseField,
+			out byte[] replacementData, out byte[] originalSerializedData)
 		{
 			modifiedBaseField = null;
 			replacementData = Array.Empty<byte>();
@@ -86,27 +59,22 @@ namespace UAFGJ
 
 			if (assetInst == null)
 			{
-				throw new InvalidOperationException(
-					"GameObject import: assetInst is null.");
+				throw new InvalidOperationException("GameObject import: assetInst is null.");
 			}
 
 			if (am == null)
 			{
-				throw new InvalidOperationException(
-					"GameObject import: AssetsManager is null.");
+				throw new InvalidOperationException("GameObject import: AssetsManager is null.");
 			}
 
 			if (afie == null)
 			{
-				throw new InvalidOperationException(
-					"GameObject import: AssetFileInfo is null.");
+				throw new InvalidOperationException("GameObject import: AssetFileInfo is null.");
 			}
 
 			if (!File.Exists(inputFile))
 			{
-				throw new FileNotFoundException(
-					"GameObject dump not found.",
-					inputFile);
+				throw new FileNotFoundException("GameObject dump not found.", inputFile);
 			}
 
 			// --------------------------------------------------------
@@ -115,34 +83,24 @@ namespace UAFGJ
 
 			if (afie.TypeId != 1)
 			{
-				throw new InvalidDataException(
-					$"GameObject importer received TypeID={afie.TypeId}, " +
-					"expected TypeID=1.");
+				throw new InvalidDataException($"GameObject importer received TypeID={afie.TypeId}, " +
+											   "expected TypeID=1.");
 			}
 
-			LogPhase(
-				$"GAMEOBJECT import starting PID={afie.PathId}, " +
-				$"checked={checkedMode}.");
+			LogPhase($"GAMEOBJECT import starting PID={afie.PathId}, " + $"checked={checkedMode}.");
 
-			DebugStr(
-				$"[GAMEOBJECT] Loading BaseField " +
-				$"PID={afie.PathId}, asset='{assetName}'.");
+			DebugStr($"[GAMEOBJECT] Loading BaseField " + $"PID={afie.PathId}, asset='{assetName}'.");
 
 			// --------------------------------------------------------
 			// LOAD BASE FIELD
 			// --------------------------------------------------------
 
-			AssetTypeValueField baseField =
-				am.GetBaseField(
-					assetInst,
-					afie);
+			AssetTypeValueField baseField = am.GetBaseField(assetInst, afie);
 
-			if (baseField == null ||
-				baseField.IsDummy)
+			if (baseField == null || baseField.IsDummy)
 			{
-				throw new InvalidDataException(
-					$"AssetsTools.NET returned a null/dummy " +
-					$"GameObject BaseField for PID={afie.PathId}.");
+				throw new InvalidDataException($"AssetsTools.NET returned a null/dummy " +
+											   $"GameObject BaseField for PID={afie.PathId}.");
 			}
 
 			// --------------------------------------------------------
@@ -162,29 +120,23 @@ namespace UAFGJ
 			// Il TypeID=1 già identifica il GameObject.
 			// --------------------------------------------------------
 
-			DebugStr(
-				$"[GAMEOBJECT] BaseField loaded. " +
-				$"TypeID={afie.TypeId}, " +
-				$"root='{baseField.TemplateField?.Name ?? "<null>"}'.");
+			DebugStr($"[GAMEOBJECT] BaseField loaded. " + $"TypeID={afie.TypeId}, " +
+					 $"root='{baseField.TemplateField?.Name ?? "<null>"}'.");
 
 			// --------------------------------------------------------
 			// ORIGINAL SERIALIZED DATA
 			// --------------------------------------------------------
 
-			originalSerializedData =
-				baseField.WriteToByteArray();
+			originalSerializedData = baseField.WriteToByteArray();
 
-			if (originalSerializedData == null ||
-				originalSerializedData.Length == 0)
+			if (originalSerializedData == null || originalSerializedData.Length == 0)
 			{
-				throw new InvalidDataException(
-					$"Original GameObject PID={afie.PathId} " +
-					"serialized to zero bytes.");
+				throw new InvalidDataException($"Original GameObject PID={afie.PathId} " +
+											   "serialized to zero bytes.");
 			}
 
-			DebugStr(
-				$"[GAMEOBJECT] Original serialized size=" +
-				$"{originalSerializedData.Length} bytes.");
+			DebugStr($"[GAMEOBJECT] Original serialized size=" +
+					 $"{originalSerializedData.Length} bytes.");
 
 			// --------------------------------------------------------
 			// STRUCTURAL ARRAYS
@@ -198,39 +150,24 @@ namespace UAFGJ
 			// Solo dopo applichiamo i valori scalari.
 			// --------------------------------------------------------
 
-			List<DumpScalar> dumpScalars =
-				ReadDumpScalars(
-					inputFile);
+			List<DumpScalar> dumpScalars = ReadDumpScalars(inputFile);
 
-			DebugStr(
-				$"[GAMEOBJECT] Dump scalars={dumpScalars.Count}. " +
-				"Synchronizing arrays.");
+			DebugStr($"[GAMEOBJECT] Dump scalars={dumpScalars.Count}. " + "Synchronizing arrays.");
 
-			SynchronizeDumpArrayStructure(
-				inputFile,
-				baseField,
-				dumpScalars,
-				true);
+			SynchronizeDumpArrayStructure(inputFile, baseField, dumpScalars, true);
 
 			// --------------------------------------------------------
 			// STRUCTURAL SCALAR MAPPING
 			// --------------------------------------------------------
 
-			List<DumpTargetMatch> matches =
-				BuildDumpTargetMatches(
-					inputFile,
-					baseField,
-					checkedMode);
+			List<DumpTargetMatch> matches = BuildDumpTargetMatches(inputFile, baseField, checkedMode);
 
 			if (matches == null)
 			{
-				throw new InvalidDataException(
-					"GAMEOBJECT mapping returned null.");
+				throw new InvalidDataException("GAMEOBJECT mapping returned null.");
 			}
 
-			DebugStr(
-				$"[GAMEOBJECT] Structural mapping passed: " +
-				$"{matches.Count} scalar fields.");
+			DebugStr($"[GAMEOBJECT] Structural mapping passed: " + $"{matches.Count} scalar fields.");
 
 			// --------------------------------------------------------
 			// APPLY DUMP VALUES
@@ -240,60 +177,48 @@ namespace UAFGJ
 			{
 				if (match == null)
 				{
-					throw new InvalidDataException(
-						"GAMEOBJECT mapping produced a null match.");
+					throw new InvalidDataException("GAMEOBJECT mapping produced a null match.");
 				}
 
 				if (match.Dump == null)
 				{
-					throw new InvalidDataException(
-						"GAMEOBJECT mapping produced a match " +
-						"with null dump value.");
+					throw new InvalidDataException("GAMEOBJECT mapping produced a match " +
+												   "with null dump value.");
 				}
 
 				if (match.Target == null)
 				{
-					throw new InvalidDataException(
-						"GAMEOBJECT mapping produced a match " +
-						"with null target.");
+					throw new InvalidDataException("GAMEOBJECT mapping produced a match " +
+												   "with null target.");
 				}
 
 				if (match.Target.Field == null)
 				{
-					throw new InvalidDataException(
-						"GAMEOBJECT mapping produced a target " +
-						"with null Field.");
+					throw new InvalidDataException("GAMEOBJECT mapping produced a target " +
+												   "with null Field.");
 				}
 
-				ApplyDumpValue(
-					match.Target.Field,
-					match.Dump);
+				ApplyDumpValue(match.Target.Field, match.Dump);
 			}
 
 			// --------------------------------------------------------
 			// SERIALIZE MODIFIED GAMEOBJECT
 			// --------------------------------------------------------
 
-			replacementData =
-				baseField.WriteToByteArray();
+			replacementData = baseField.WriteToByteArray();
 
-			if (replacementData == null ||
-				replacementData.Length == 0)
+			if (replacementData == null || replacementData.Length == 0)
 			{
-				throw new InvalidDataException(
-					"Modified GameObject serialized to zero bytes.");
+				throw new InvalidDataException("Modified GameObject serialized to zero bytes.");
 			}
 
-			DebugStr(
-				$"[GAMEOBJECT] Serialized replacement: " +
-				$"{replacementData.Length} bytes.");
+			DebugStr($"[GAMEOBJECT] Serialized replacement: " + $"{replacementData.Length} bytes.");
 
 			// --------------------------------------------------------
 			// RETURN
 			// --------------------------------------------------------
 
-			modifiedBaseField =
-				baseField;
+			modifiedBaseField = baseField;
 
 			return true;
 		}
