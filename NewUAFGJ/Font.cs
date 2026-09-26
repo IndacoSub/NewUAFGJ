@@ -12,6 +12,97 @@ namespace UAFGJ
 		// UNITY FONT - TYPEID 128
 		// ============================================================
 
+		private static bool LooksLikeFontDump(
+	string inputFile)
+		{
+			if (string.IsNullOrWhiteSpace(inputFile) ||
+				!File.Exists(inputFile))
+			{
+				return false;
+			}
+
+			bool hasFontInfo =
+				false;
+
+			bool hasGlyphInfo =
+				false;
+
+			bool hasFontCreationSettings =
+				false;
+
+			try
+			{
+				using (var reader =
+					new StreamReader(
+						inputFile,
+						true))
+				{
+					while (true)
+					{
+						string line =
+							reader.ReadLine();
+
+						if (line == null)
+							break;
+
+						if (!hasFontInfo &&
+							line.IndexOf(
+								"m_fontInfo",
+								StringComparison.OrdinalIgnoreCase) >= 0)
+						{
+							hasFontInfo = true;
+						}
+
+						if (!hasGlyphInfo &&
+							line.IndexOf(
+								"m_glyphInfoList",
+								StringComparison.OrdinalIgnoreCase) >= 0)
+						{
+							hasGlyphInfo = true;
+						}
+
+						if (!hasFontCreationSettings &&
+							line.IndexOf(
+								"fontCreationSettings",
+								StringComparison.OrdinalIgnoreCase) >= 0)
+						{
+							hasFontCreationSettings = true;
+						}
+
+						if (hasFontInfo &&
+							hasGlyphInfo &&
+							hasFontCreationSettings)
+						{
+							DebugStr(
+								$"[FONT] Dump detected as TMP_FontAsset: " +
+								$"fontInfo={hasFontInfo}, " +
+								$"glyphInfo={hasGlyphInfo}, " +
+								$"fontCreationSettings={hasFontCreationSettings}");
+
+							return true;
+						}
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				DebugStr(
+					$"[FONT] Font dump detection failed for " +
+					$"'{inputFile}': " +
+					$"{ex.GetType().Name}: {ex.Message}");
+
+				return false;
+			}
+
+			DebugStr(
+				$"[FONT] Dump is not recognized as TMP_FontAsset: " +
+				$"fontInfo={hasFontInfo}, " +
+				$"glyphInfo={hasGlyphInfo}, " +
+				$"fontCreationSettings={hasFontCreationSettings}");
+
+			return false;
+		}
+
 		private static bool ImportUnityFont(
 			string inputFile,
 			AssetsManager am,
@@ -57,19 +148,24 @@ namespace UAFGJ
 		}
 
 		private static bool ImportUnityFontInternal(
-			string inputFile,
-			AssetsManager am,
-			AssetFileInfo afie,
-			AssetsFileInstance assetInst,
-			string assetName,
-			bool checkedMode,
-			out AssetTypeValueField modifiedBaseField,
-			out byte[] replacementData,
-			out byte[] originalSerializedData)
+	string inputFile,
+	AssetsManager am,
+	AssetFileInfo afie,
+	AssetsFileInstance assetInst,
+	string assetName,
+	bool checkedMode,
+	out AssetTypeValueField modifiedBaseField,
+	out byte[] replacementData,
+	out byte[] originalSerializedData)
 		{
-			modifiedBaseField = null;
-			replacementData = Array.Empty<byte>();
-			originalSerializedData = Array.Empty<byte>();
+			modifiedBaseField =
+				null;
+
+			replacementData =
+				Array.Empty<byte>();
+
+			originalSerializedData =
+				Array.Empty<byte>();
 
 			if (assetInst == null)
 			{
@@ -96,21 +192,34 @@ namespace UAFGJ
 					inputFile);
 			}
 
-			if (afie.TypeId != 128)
+			bool isUnityFontType =
+				afie.TypeId == 128;
+
+			bool isTmpFontAsset =
+				afie.TypeId == 114;
+
+			if (!isUnityFontType &&
+				!isTmpFontAsset)
 			{
 				throw new InvalidDataException(
-					$"Unity Font importer requires TypeID=128, " +
+					$"Font importer requires TypeID=128 or TypeID=114, " +
 					$"but target PID={afie.PathId} has TypeID={afie.TypeId}.");
 			}
 
+			string targetKind =
+				isTmpFontAsset
+					? "TMP_FontAsset (MonoBehaviour)"
+					: "Unity Font";
+
 			DebugStr(
-				$"[FONT] Importing Unity Font " +
+				$"[FONT] Importing {targetKind} " +
 				$"PID={afie.PathId}, " +
 				$"asset='{assetName}', " +
 				$"checked={checkedMode}");
 
 			LogPhase(
 				$"FONT import starting PID={afie.PathId}, " +
+				$"TypeID={afie.TypeId}, " +
 				$"checked={checkedMode}.");
 
 			// ========================================================
@@ -131,7 +240,7 @@ namespace UAFGJ
 			{
 				throw new InvalidDataException(
 					"AssetsTools.NET returned a null/dummy " +
-					"BaseField for Unity Font.");
+					"BaseField for Font/TMP_FontAsset.");
 			}
 
 			// ========================================================
@@ -145,7 +254,7 @@ namespace UAFGJ
 				originalSerializedData.Length == 0)
 			{
 				throw new InvalidDataException(
-					$"Original Unity Font serialized to zero bytes " +
+					$"Original Font serialized to zero bytes " +
 					$"for PID={afie.PathId}.");
 			}
 
@@ -166,27 +275,28 @@ namespace UAFGJ
 				$"[FONT] Dump scalar count={dumpScalars.Count}");
 
 			// ========================================================
-			// RECONSTRUCT FONT STRUCTURE FROM THE DUMP
+			// FONT STRUCTURE RECONSTRUCTION
 			//
 			// IMPORTANT:
 			//
-			// A Font TXT is intentionally allowed to be PARTIAL.
+			// The TXT dump may be partial.
 			//
-			// Therefore:
+			// Arrays present in the dump:
+			//     -> resized to the dump count.
 			//
-			//   - arrays present in the TXT are resized to the dump size;
-			//   - arrays absent from the TXT are cleared;
-			//   - omitted scalar fields are not required to exist in
-			//     the dump;
-			//   - scalar fields that ARE present are structurally checked.
+			// Arrays absent from the dump:
+			//     -> cleared.
+			//
+			// Scalars present in the dump:
+			//     -> structurally checked.
+			//
+			// Scalars absent from the dump:
+			//     -> allowed.
 			// ========================================================
 
 			DebugStr(
 				"[FONT] Synchronizing array structure " +
 				"from partial dump.");
-
-			DebugStr(
-	"[FONT] Synchronizing array structure from partial dump.");
 
 			SynchronizeFontDumpArrayStructure(
 				inputFile,
@@ -199,6 +309,16 @@ namespace UAFGJ
 				BuildFontDumpTargetMatches(
 					inputFile,
 					baseField);
+
+			if (matches == null)
+			{
+				throw new InvalidDataException(
+					"[FONT] Font scalar mapping returned null.");
+			}
+
+			DebugStr(
+				$"[FONT] Font scalar mapping produced " +
+				$"{matches.Count} matches.");
 
 			foreach (DumpTargetMatch match in matches)
 			{
@@ -252,7 +372,7 @@ namespace UAFGJ
 				replacementData.Length == 0)
 			{
 				throw new InvalidDataException(
-					$"Modified Unity Font serialized to zero bytes " +
+					$"Modified Font serialized to zero bytes " +
 					$"for PID={afie.PathId}.");
 			}
 
@@ -266,6 +386,7 @@ namespace UAFGJ
 
 			LogPhase(
 				$"FONT import finished PID={afie.PathId}; " +
+				$"TypeID={afie.TypeId}; " +
 				$"originalBytes={originalSerializedData.Length}, " +
 				$"newBytes={replacementData.Length}.");
 

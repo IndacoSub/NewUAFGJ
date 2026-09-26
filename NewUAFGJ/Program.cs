@@ -93,13 +93,15 @@ namespace UAFGJ
 
 				if (args == null)
 				{
-					DisplayStr("Null args!");
+					DisplayStr("[FATAL] Null args!");
+					Environment.ExitCode = 1;
 					return;
 				}
 
 				if (args.Length < 2)
 				{
-					DisplayStr("Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId] [fileId] [fileKind]");
+					DisplayStr("[FATAL] Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId] [fileId] [fileKind]");
+					Environment.ExitCode = 1;
 					return;
 				}
 
@@ -122,13 +124,15 @@ namespace UAFGJ
 
 				if (!File.Exists(assetOrBundle))
 				{
-					DisplayStr("Input bundle/assets file not found: " + assetOrBundle);
+					DisplayStr("[FATAL] Input bundle/assets file not found: " + assetOrBundle);
+					Environment.ExitCode = 1;
 					return;
 				}
 
 				if (!File.Exists(inputFile))
 				{
-					DisplayStr("Input replacement file not found: " + inputFile);
+					DisplayStr("[FATAL] Input replacement file not found: " + inputFile);
+					Environment.ExitCode = 1;
 					return;
 				}
 

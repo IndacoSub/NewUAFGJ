@@ -100,34 +100,116 @@ namespace UAFGJ
 
 
 		private static string ResolveEffectiveFileKind(
-			string requestedKind,
-			int targetTypeId,
-			string inputFile)
+	string requestedKind,
+	int targetTypeId,
+	string inputFile)
 		{
-			/*
-             * PNG/Texture2D does NOT use the TXT fileKind resolver.
-             *
-             * TypeID 28 is Texture2D and is handled by:
-             * FindPNGFile -> ImportTexturesCustom -> PNG save path.
-             */
-			if (IsPngReplacement(inputFile))
+			// ============================================================
+			// PNG / TEXTURE2D
+			// ============================================================
+
+			if (IsPngReplacement(
+				inputFile))
 			{
 				DebugStr(
-					$"[CHECK] PNG replacement detected for TypeID={targetTypeId}; " +
+					$"[CHECK] PNG replacement detected for " +
+					$"TypeID={targetTypeId}; " +
 					"skipping TXT fileKind resolution.");
 
 				if (targetTypeId != 28)
 				{
 					throw new InvalidDataException(
-						$"[FATAL] PNG replacement requires Texture2D TypeID=28, " +
-						$"but target TypeID={targetTypeId}.");
+						$"[FATAL] PNG replacement requires Texture2D " +
+						$"TypeID=28, but target TypeID={targetTypeId}.");
 				}
 
 				return "PNG";
 			}
 
+			string normalizedRequestedKind =
+				requestedKind?.Trim() ?? "";
+
+			// ============================================================
+			// TMP_FONT AS MONOBEHAVIOUR
+			//
+			// These assets are TypeID=114, NOT TypeID=128.
+			//
+			// When the caller leaves fileKind empty, inspect the dump.
+			// If it is a TMP_FontAsset dump, select the Font-specific
+			// partial validation path.
+			//
+			// Also normalize a generic MONOBEHAVIOUR_FULL(_CHECKED)
+			// request when the actual dump is unmistakably a Font dump.
+			// ============================================================
+
+			if (targetTypeId == 114 &&
+				LooksLikeFontDump(
+					inputFile))
+			{
+				if (string.IsNullOrWhiteSpace(
+					normalizedRequestedKind))
+				{
+					DebugStr(
+						"[CHECK] TypeID=114 dump recognized as TMP_FontAsset. " +
+						"Using MONOBEHAVIOUR_FONT_CHECKED automatically.");
+
+					return "MONOBEHAVIOUR_FONT_CHECKED";
+				}
+
+				if (string.Equals(
+						normalizedRequestedKind,
+						"MONOBEHAVIOUR_FULL",
+						StringComparison.OrdinalIgnoreCase))
+				{
+					DebugStr(
+						"[CHECK] TypeID=114 TMP_FontAsset detected. " +
+						"Normalizing MONOBEHAVIOUR_FULL -> MONOBEHAVIOUR_FONT.");
+
+					return "MONOBEHAVIOUR_FONT";
+				}
+
+				if (string.Equals(
+						normalizedRequestedKind,
+						"MONOBEHAVIOUR_FULL_CHECKED",
+						StringComparison.OrdinalIgnoreCase))
+				{
+					DebugStr(
+						"[CHECK] TypeID=114 TMP_FontAsset detected. " +
+						"Normalizing MONOBEHAVIOUR_FULL_CHECKED " +
+						"-> MONOBEHAVIOUR_FONT_CHECKED.");
+
+					return "MONOBEHAVIOUR_FONT_CHECKED";
+				}
+
+				if (string.Equals(
+						normalizedRequestedKind,
+						"MONOBEHAVIOUR_FONT",
+						StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(
+						normalizedRequestedKind,
+						"MONOBEHAVIOUR_FONT_CHECKED",
+						StringComparison.OrdinalIgnoreCase))
+				{
+					return normalizedRequestedKind;
+				}
+			}
+
+			// ============================================================
+			// EXPLICIT FILE KIND
+			// ============================================================
+
+			if (!string.IsNullOrWhiteSpace(
+				normalizedRequestedKind))
+			{
+				return normalizedRequestedKind;
+			}
+
+			// ============================================================
+			// STANDARD AUTOMATIC RESOLUTION
+			// ============================================================
+
 			return ResolveFileKindForTarget(
-				requestedKind,
+				normalizedRequestedKind,
 				targetTypeId);
 		}
 

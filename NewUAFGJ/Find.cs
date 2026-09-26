@@ -1087,7 +1087,7 @@ namespace UAFGJ
 			if (assetInst == null)
 			{
 				DebugStr(
-					"[TXT] AssetsFileInstance is null.");
+					"[FATAL] AssetsFileInstance is null.");
 
 				return false;
 			}
@@ -1095,7 +1095,7 @@ namespace UAFGJ
 			if (am == null)
 			{
 				DebugStr(
-					"[TXT] AssetsManager is null.");
+					"[FATAL] AssetsManager is null.");
 
 				return false;
 			}
@@ -1103,7 +1103,7 @@ namespace UAFGJ
 			if (!File.Exists(inputFile))
 			{
 				DebugStr(
-					$"[TXT] Replacement file does not exist: {inputFile}");
+					$"[FATAL] Replacement file does not exist: {inputFile}");
 
 				return false;
 			}
@@ -1132,7 +1132,7 @@ namespace UAFGJ
 					out requestedFileId))
 			{
 				DisplayStr(
-					$"[TXT] Invalid FileID '{specific_fileid}'. " +
+					$"[FATAL] Invalid FileID '{specific_fileid}'. " +
 					"Expected an integer or '-'.");
 
 				return false;
@@ -1243,7 +1243,7 @@ namespace UAFGJ
 					catch (Exception ex)
 					{
 						DebugStr(
-							$"[TXT] Failed resolving FileID={fileId}, " +
+							$"[FATAL] Failed resolving FileID={fileId}, " +
 							$"PID={wantedPathId}: " +
 							$"{ex.GetType().Name}: {ex.Message}");
 					}

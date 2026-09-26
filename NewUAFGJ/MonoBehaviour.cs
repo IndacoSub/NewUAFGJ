@@ -249,172 +249,218 @@ namespace UAFGJ
                 out originalSerializedData);
         }
 
-        private static bool ImportMonoBehaviourFullInternal(
-            string inputFile,
-            AssetsManager am,
-            AssetFileInfo afie,
-            AssetsFileInstance assetInst,
-            string assetName,
-            bool checkedMode,
-            out AssetTypeValueField modifiedBaseField,
-            out byte[] replacementData,
-            out byte[] originalSerializedData)
-        {
-            modifiedBaseField = null;
-            replacementData = Array.Empty<byte>();
-            originalSerializedData = Array.Empty<byte>();
+		private static bool ImportMonoBehaviourFullInternal(
+	string inputFile,
+	AssetsManager am,
+	AssetFileInfo afie,
+	AssetsFileInstance assetInst,
+	string assetName,
+	bool checkedMode,
+	out AssetTypeValueField modifiedBaseField,
+	out byte[] replacementData,
+	out byte[] originalSerializedData)
+		{
+			modifiedBaseField =
+				null;
 
-            if (assetInst == null)
-            {
-                throw new InvalidOperationException(
+			replacementData =
+				Array.Empty<byte>();
+
+			originalSerializedData =
+				Array.Empty<byte>();
+
+			if (assetInst == null)
+			{
+				throw new InvalidOperationException(
 					"[FATAL] assetInst is null.");
-            }
+			}
 
-            if (am == null)
-            {
-                throw new InvalidOperationException(
+			if (am == null)
+			{
+				throw new InvalidOperationException(
 					"[FATAL] AssetsManager is null.");
-            }
+			}
 
-            if (afie == null)
-            {
-                throw new InvalidOperationException(
+			if (afie == null)
+			{
+				throw new InvalidOperationException(
 					"[FATAL] AssetFileInfo is null.");
-            }
+			}
 
-            if (!File.Exists(inputFile))
-            {
-                throw new FileNotFoundException(
+			if (!File.Exists(inputFile))
+			{
+				throw new FileNotFoundException(
 					"[FATAL] TXT input not found.",
-                    inputFile);
-            }
+					inputFile);
+			}
 
-            LogPhase($"FULL import starting PID={afie.PathId}, checked={checkedMode}.");
-            DebugStr(
-                $"[TXT] Importing FULL MonoBehaviour " +
-                $"PID={afie.PathId}, " +
-                $"asset='{assetName}', " +
-                $"checked={checkedMode}");
+			// ============================================================
+			// SPECIAL CASE:
+			//
+			// TMP_FontAsset is serialized as MonoBehaviour TypeID=114.
+			//
+			// Its TXT dump is partial by design and therefore MUST NOT
+			// go through the generic:
+			//
+			//     ApplyTextDumpToBaseField()
+			//
+			// because that path requires:
+			//
+			//     dumpScalarCount == targetScalarCount
+			//
+			// Instead use the Font-specific array reconstruction /
+			// partial structural mapper.
+			// ============================================================
 
-            // --------------------------------------------------------
-            // Load BaseField.
-            // --------------------------------------------------------
+			if (afie.TypeId == 114 &&
+				LooksLikeFontDump(inputFile))
+			{
+				DebugStr(
+					$"[FONT] Detected TMP_FontAsset dump inside " +
+					$"MonoBehaviour TypeID=114. " +
+					$"Redirecting to Font-specific importer. " +
+					$"PID={afie.PathId}, " +
+					$"checked={checkedMode}");
 
-            DebugStr($"[TXT] Requesting BaseField from AssetsTools.NET for PID={afie.PathId}.");
-            AssetTypeValueField baseField =
-                am.GetBaseField(
-                    assetInst,
-                    afie);
+				LogPhase(
+					$"TMP_FontAsset import starting PID={afie.PathId}, " +
+					$"checked={checkedMode}.");
 
-            if (baseField == null ||
-                baseField.IsDummy)
-            {
-                throw new InvalidDataException(
+				return ImportUnityFontInternal(
+					inputFile,
+					am,
+					afie,
+					assetInst,
+					assetName,
+					checkedMode,
+					out modifiedBaseField,
+					out replacementData,
+					out originalSerializedData);
+			}
+
+			// ============================================================
+			// GENERIC MONOBEHAVIOUR PATH
+			// ============================================================
+
+			LogPhase(
+				$"FULL import starting PID={afie.PathId}, " +
+				$"checked={checkedMode}.");
+
+			DebugStr(
+				$"[TXT] Importing FULL MonoBehaviour " +
+				$"PID={afie.PathId}, " +
+				$"asset='{assetName}', " +
+				$"checked={checkedMode}");
+
+			// --------------------------------------------------------
+			// LOAD BASEFIELD
+			// --------------------------------------------------------
+
+			DebugStr(
+				$"[TXT] Requesting BaseField from AssetsTools.NET " +
+				$"for PID={afie.PathId}.");
+
+			AssetTypeValueField baseField =
+				am.GetBaseField(
+					assetInst,
+					afie);
+
+			if (baseField == null ||
+				baseField.IsDummy)
+			{
+				throw new InvalidDataException(
 					"[FATAL] AssetsTools.NET returned a null/dummy BaseField.");
-            }
+			}
 
-            // --------------------------------------------------------
-            // Preserve original serialized data.
-            // --------------------------------------------------------
+			// --------------------------------------------------------
+			// PRESERVE ORIGINAL SERIALIZED DATA
+			// --------------------------------------------------------
 
-            originalSerializedData =
-                baseField.WriteToByteArray();
+			originalSerializedData =
+				baseField.WriteToByteArray();
 
-            DebugStr(
-                $"[CHECK] Original target base field " +
-                $"serialized size={originalSerializedData.Length} " +
-                $"SHA256={Sha256Hex(originalSerializedData)}");
+			if (originalSerializedData == null ||
+				originalSerializedData.Length == 0)
+			{
+				throw new InvalidDataException(
+					$"[FATAL] Original MonoBehaviour serialized to zero bytes " +
+					$"for PID={afie.PathId}.");
+			}
 
-            // --------------------------------------------------------
-            // FULL CHECKED
-            //
-            // Delegate completamente alla funzione che gi� conosciamo:
-            //
-            //   ApplyTextDumpToBaseField
-            //
-            // Questa esegue il controllo:
-            //
-            //   count
-            //   field name
-            //   field order
-            //   field type
-            //   value
-            //
-            // e poi applica il dump.
-            // --------------------------------------------------------
+			DebugStr(
+				$"[CHECK] Original target base field " +
+				$"serialized size={originalSerializedData.Length} " +
+				$"SHA256={Sha256Hex(originalSerializedData)}");
 
-            DebugStr($"[TXT] FULL mode preflight selected: checked={checkedMode}.");
+			// --------------------------------------------------------
+			// GENERIC FULL IMPORT
+			// --------------------------------------------------------
 
-            if (checkedMode)
-            {
-                DebugStr(
-                    "[TXT] FULL checked mode: " +
-                    "applying dump with scalar validation.");
+			DebugStr(
+				$"[TXT] FULL mode preflight selected: " +
+				$"checked={checkedMode}");
 
-                ApplyTextDumpToBaseField(
-                    inputFile,
-                    baseField);
-            }
-            else
-            {
-                // ----------------------------------------------------
-                // FULL UNCHECKED
-                //
-                // Applica il dump senza richiedere che il numero
-                // di scalari corrisponda esattamente.
-                //
-                // I campi vengono applicati in ordine posizionale
-                // finch� entrambi i lati hanno dati.
-                //
-                // ATTENZIONE:
-                // questo � volutamente "unchecked".
-                // Il chiamante ha dichiarato che sa che il dump
-                // appartiene a quel tipo di asset.
-                // ----------------------------------------------------
+			if (checkedMode)
+			{
+				DebugStr(
+					"[TXT] FULL checked mode: " +
+					"applying dump with scalar validation.");
 
-                ApplyTextDumpToBaseFieldUnchecked(
-                    inputFile,
-                    baseField);
-            }
+				ApplyTextDumpToBaseField(
+					inputFile,
+					baseField);
+			}
+			else
+			{
+				DebugStr(
+					"[TXT] FULL unchecked mode: " +
+					"applying structural dump mapping.");
 
-            // --------------------------------------------------------
-            // Serialize modified asset.
-            // --------------------------------------------------------
+				ApplyTextDumpToBaseFieldUnchecked(
+					inputFile,
+					baseField);
+			}
 
-            DebugStr("[TXT] Serializing modified FULL BaseField.");
-            replacementData =
-                baseField.WriteToByteArray();
+			// --------------------------------------------------------
+			// SERIALIZE MODIFIED ASSET
+			// --------------------------------------------------------
 
-            if (replacementData == null ||
-                replacementData.Length == 0)
-            {
-                throw new InvalidDataException(
+			DebugStr(
+				"[TXT] Serializing modified FULL BaseField.");
+
+			replacementData =
+				baseField.WriteToByteArray();
+
+			if (replacementData == null ||
+				replacementData.Length == 0)
+			{
+				throw new InvalidDataException(
 					"[FATAL] Modified MonoBehaviour serialized to zero bytes.");
-            }
+			}
 
-            DebugStr(
-                $"[TXT] FULL MonoBehaviour serialized: " +
-                $"{replacementData.Length} bytes " +
-                $"SHA256={Sha256Hex(replacementData)}");
+			DebugStr(
+				$"[TXT] FULL MonoBehaviour serialized: " +
+				$"{replacementData.Length} bytes " +
+				$"SHA256={Sha256Hex(replacementData)}");
 
-            modifiedBaseField =
-                baseField;
+			modifiedBaseField =
+				baseField;
 
-            return true;
-        }
+			return true;
+		}
 
 
-        // ============================================================
-        // DUMP STRING FIELD
-        //
-        // Estrae:
-        //
-        //   1 string m_text = "..."
-        //
-        // senza fare affidamento sull'intero albero del dump.
-        // ============================================================
+		// ============================================================
+		// DUMP STRING FIELD
+		//
+		// Estrae:
+		//
+		//   1 string m_text = "..."
+		//
+		// senza fare affidamento sull'intero albero del dump.
+		// ============================================================
 
-        private static string ReadDumpStringField(
+		private static string ReadDumpStringField(
             string inputFile,
             string wantedFieldName)
         {
