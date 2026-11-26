@@ -1100,6 +1100,45 @@ public sealed partial class ReplacementTests : IDisposable
     }
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task ClearsSdfFontKerningPairsWithAConsistentArrayCount(int declaredSize)
+    {
+        string source = UnderTemp("sdf.assets");
+        byte[] original = UnityFixture.CreateSdfFontAssets(SelectedPathId, includeFontFeatureTable: true);
+        File.WriteAllBytes(source, original);
+        string replacement = UnderTemp("font.txt");
+        File.WriteAllText(replacement, SdfFontDump + "\n" + $$"""
+             0 TMP_FontFeatureTable m_FontFeatureTable
+              0 TMP_GlyphPairAdjustmentRecord m_GlyphPairAdjustmentRecords
+               0 Array Array (0 items)
+                0 int size = {{declaredSize}}
+            """);
+
+        var result = await RunCli(source, replacement, SelectedPathId.ToString());
+
+        if (declaredSize == 0)
+        {
+            Assert.True(result.ExitCode == 0, result.Error);
+            using var reader = new AssetsFileReader(new MemoryStream(ReadObject(source, SelectedPathId)));
+            AssertAlignedString(reader, "test font");
+            Assert.Equal(0, reader.ReadInt32()); // Glyph count.
+            Assert.Equal(0, reader.ReadInt32()); // Character count.
+            Assert.Equal(1, reader.ReadInt32()); // Atlas count.
+            Assert.Equal(0, reader.ReadInt32());
+            Assert.Equal(44L, reader.ReadInt64());
+            Assert.Equal(0, reader.ReadInt32()); // Kerning pair count.
+            Assert.Equal(reader.BaseStream.Length, reader.Position);
+        }
+        else
+        {
+            AssertFailure(result, "Expected 0 int size = 0");
+            Assert.Equal(original, File.ReadAllBytes(source));
+        }
+        AssertNoStagingFile(source);
+    }
+
+    [Theory]
     [InlineData(false, "does not match the selected object's serialized bytes")]
     [InlineData(true, "has no elements to describe this array")]
     public async Task RejectsIncompleteOrNonmatchingOriginalFontDump(bool emptyGlyphs, string message)

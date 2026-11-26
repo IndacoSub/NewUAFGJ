@@ -366,7 +366,20 @@ internal static class StructuredAssetDump
         {
             FontLayout.TextMeshPro => (field.Name, field.Type) is
                 ("m_GlyphTable", "Glyph") or ("m_CharacterTable", "TMP_Character") or
-                ("m_UsedGlyphRects", "GlyphRect") or ("m_FreeGlyphRects", "GlyphRect"),
+                ("m_UsedGlyphRects", "GlyphRect") or ("m_FreeGlyphRects", "GlyphRect") ||
+                field is
+                {
+                    Name: "m_FontFeatureTable",
+                    Type: "TMP_FontFeatureTable",
+                    Children:
+                    [
+                        {
+                            Name: "m_GlyphPairAdjustmentRecords",
+                            Type: "TMP_GlyphPairAdjustmentRecord",
+                            Children: [{ IsArray: true, Type: "Array", Name: "Array" }]
+                        }
+                    ]
+                },
             FontLayout.LegacyTextMeshPro => (field.Name, field.Type) is
                 ("m_glyphInfoList", "TMP_Glyph") or ("m_kerningInfo", "KerningTable"),
             FontLayout.Native => (field.Name, field.Type) is

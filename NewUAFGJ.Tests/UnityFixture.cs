@@ -117,9 +117,10 @@ internal static class UnityFixture
         return stream.ToArray();
     }
 
-    public static byte[] CreateSdfFontAssets(long pathId, bool hasTypeTree = true, bool hasGlyphs = true)
+    public static byte[] CreateSdfFontAssets(long pathId, bool hasTypeTree = true, bool hasGlyphs = true,
+        bool includeFontFeatureTable = false)
     {
-        var type = MakeType(AssetClassID.MonoBehaviour, Hash128.NewBlankHash(),
+        List<(byte Level, string Type, string Name, int Size, bool IsArray, bool IsAligned)> layout =
         [
             (0, "MonoBehaviour", "Base", -1, false, false),
             ..StringNodes(1, "m_Name"),
@@ -137,7 +138,20 @@ internal static class UnityFixture
             (2, "Array", "Array", -1, true, false),
             (3, "int", "size", 4, false, false),
             ..PointerNodes(3, "Texture2D", "data")
-        ]);
+        ];
+        if (includeFontFeatureTable)
+        {
+            layout.AddRange([
+                (1, "TMP_FontFeatureTable", "m_FontFeatureTable", -1, false, false),
+                (2, "TMP_GlyphPairAdjustmentRecord", "m_GlyphPairAdjustmentRecords", -1, false, false),
+                (3, "Array", "Array", -1, true, false),
+                (4, "int", "size", 4, false, false),
+                (4, "TMP_GlyphPairAdjustmentRecord", "data", 4, false, false),
+                (5, "unsigned int", "m_GlyphIndex", 4, false, false)
+            ]);
+        }
+
+        var type = MakeType(AssetClassID.MonoBehaviour, Hash128.NewBlankHash(), [..layout]);
         return CreateFontFixture(type, pathId, writer =>
         {
             writer.Write(hasGlyphs ? 1 : 0);
@@ -149,6 +163,12 @@ internal static class UnityFixture
             writer.Write(1);    // Atlas count.
             writer.Write(0);
             writer.Write(44L);
+            if (includeFontFeatureTable)
+            {
+                writer.Write(2);
+                writer.Write(23u);
+                writer.Write(24u);
+            }
         }, hasTypeTree);
     }
 
