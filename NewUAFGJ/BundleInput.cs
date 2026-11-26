@@ -55,19 +55,47 @@ internal sealed class BundleInput : IDisposable
     internal AssetBundleFile Bundle { get; }
     internal AssetBundleCompressionType Compression { get; }
 
-    internal Dictionary<int, AssetsFile> ReadSerializedEntries()
+    internal IEnumerable<(int Index, AssetsFile File)> ReadSerializedEntries(bool supportedFormatsOnly = false)
     {
-        var entries = new Dictionary<int, AssetsFile>();
-        for (int index = 0; index < Bundle.BlockAndDirInfo.DirectoryInfos.Count; index++)
+        var entries = Bundle.BlockAndDirInfo.DirectoryInfos;
+        for (int index = 0; index < entries.Count; index++)
         {
-            if (Bundle.IsAssetsFile(index))
+            AssetBundleDirectoryInfo entry = entries[index];
+            if (!entry.IsSerialized && IsResourceName(entry.Name))
+                continue;
+
+            if (!entry.IsSerialized || supportedFormatsOnly)
             {
-                AssetsFile file = BundleHelper.LoadAssetFromBundle(Bundle, index);
-                AssetReplacement.CheckFileSize(file);
-                entries.Add(index, file);
+                Bundle.GetFileRange(index, out long offset, out long size);
+                if (!AssetReplacement.HasSupportedSerializedFormat(Bundle.DataReader, offset, size))
+                    continue;
+
+                // Keep supporting bundles written without the serialized entry flag.
+                if (!entry.IsSerialized && !HasSerializedHeader(Bundle.DataReader, offset, size))
+                    continue;
             }
+
+            AssetsFile file = BundleHelper.LoadAssetFromBundle(Bundle, index);
+            AssetReplacement.CheckFileSize(file);
+            yield return (index, file);
         }
-        return entries;
+    }
+
+    private static bool IsResourceName(string name) =>
+        name.EndsWith(".resS", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith(".resource", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasSerializedHeader(AssetsFileReader reader, long offset, long size)
+    {
+        reader.Position = offset;
+        var header = new AssetsFileHeader();
+        header.Read(reader);
+        return header.MetadataSize > 0 &&
+            header.GetSize() + header.MetadataSize <= header.DataOffset &&
+            header.DataOffset <= header.FileSize &&
+            header.FileSize <= size &&
+            AssetsFile.IsAssetsFile(reader, offset, size);
     }
 
     public void Dispose()

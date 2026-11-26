@@ -377,6 +377,48 @@ public sealed partial class ReplacementTests : IDisposable
         AssertNoStagingFile(bundlePath);
     }
 
+    [Theory]
+    [InlineData(true, ".resS")]
+    [InlineData(false, ".bin")]
+    public async Task ReplacesTextureWhenResourceLooksLikeASerializedFile(bool flagAsset, string resourceExtension)
+    {
+        string source = UnderTemp("texture.bundle");
+        string resourceName = UnityFixture.EntryName + resourceExtension;
+        const int offset = 80;
+        const int imageSize = 32;
+        byte[] resource = new byte[128];
+        BinaryPrimitives.WriteUInt32BigEndian(resource.AsSpan(8), 0x80000016);
+        resource[20] = (byte)'U';
+        byte[] assets = UnityFixture.CreateTextureAssets(4, 8, imageSize,
+            $"archive:/{UnityFixture.EntryName}/{resourceName}", offset, SelectedPathId);
+        UnityFixture.WriteBundle(source, AssetBundleCompressionType.LZ4,
+            (UnityFixture.EntryName, assets, flagAsset), (resourceName, resource, false));
+
+        var result = await RunCli(source, MakeTexturePng());
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        var manager = new AssetsManager();
+        try
+        {
+            var bundle = manager.LoadBundleFile(source);
+            Assert.Equal(AssetBundleCompressionType.LZ4, bundle.originalCompression);
+            Assert.Equal(flagAsset, bundle.file.BlockAndDirInfo.DirectoryInfos[0].IsSerialized);
+            Assert.False(bundle.file.BlockAndDirInfo.DirectoryInfos[1].IsSerialized);
+            Assert.Equal(assets, BundleHelper.LoadAssetDataFromBundle(bundle.file, UnityFixture.EntryName));
+            byte[] replaced = BundleHelper.LoadAssetDataFromBundle(bundle.file, resourceName);
+            Assert.Equal(resource.Length, replaced.Length);
+            Assert.Equal(resource[..offset], replaced[..offset]);
+            Assert.Equal(resource[(offset + imageSize)..], replaced[(offset + imageSize)..]);
+            AssertSolidBc3Block(replaced.AsSpan(offset, 16), 0, 0, 255, 85);
+            AssertSolidBc3Block(replaced.AsSpan(offset + 16, 16), 255, 0, 0, 255);
+        }
+        finally
+        {
+            manager.UnloadAll();
+        }
+        AssertNoStagingFile(source);
+    }
+
     [Fact]
     public async Task StoresInlineRgba32PixelsInUnityRowOrder()
     {

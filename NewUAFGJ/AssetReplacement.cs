@@ -311,7 +311,7 @@ internal static class AssetReplacement
         AssetBundleFile bundle = input.Bundle;
         Dictionary<int, AssetsFile> files;
         using (PerformanceProfile.Measure(PerformanceProfile.BundleLoading))
-            files = input.ReadSerializedEntries();
+            files = input.ReadSerializedEntries().ToDictionary(entry => entry.Index, entry => entry.File);
         session.TypeTrees.RegisterLoaded(source.Name, files.Select(pair =>
             (pair.Value, $"{source.Name}:{bundle.GetFileName(pair.Key)}")));
 
@@ -454,6 +454,17 @@ internal static class AssetReplacement
     }
 
     internal static bool IsSupportedSerializedFormat(uint version) => version is >= 17 and <= 22;
+
+    internal static bool HasSupportedSerializedFormat(AssetsFileReader reader, long offset, long length)
+    {
+        if (length < 0x30)
+            return false;
+
+        // The format field is always big-endian and precedes the TypeTree metadata.
+        reader.BigEndian = true;
+        reader.Position = offset + 8;
+        return IsSupportedSerializedFormat(reader.ReadUInt32());
+    }
 
     private static IEnumerable<Target> FindTargets(Dictionary<int, AssetsFile> files, AssetClassID classId,
         long? pathId, string? entry = null, AssetBundleFile? bundle = null)
