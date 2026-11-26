@@ -16,19 +16,20 @@ internal static class StructuredAssetDump
         LegacyTextMeshPro
     }
 
-    public static byte[] Import(AssetsFile file, AssetFileInfo asset, byte[] dump, string? typeTreeSource)
+    public static byte[] Import(AssetsFile file, AssetFileInfo asset, byte[] dump, ReplacementTypeTree resolver,
+        string? typeTreeSource)
     {
         AssetClassID assetClass = (AssetClassID)asset.TypeId;
         AssetTypeValueField root;
-        if (assetClass == AssetClassID.MonoBehaviour && !file.Metadata.TypeTreeEnabled &&
-            typeTreeSource is not null && OriginalFontDump.TryRead(typeTreeSource) is { } original)
+        if (assetClass == AssetClassID.MonoBehaviour && !ReplacementTypeTree.HasEmbedded(file, asset) &&
+            typeTreeSource is not null && resolver.OriginalFontDump(typeTreeSource) is { } original)
         {
             root = ReadVerifiedFont(file, asset, original);
         }
         else
         {
             var template = new AssetTypeTemplateField();
-            template.FromTypeTree(ReplacementTypeTree.Resolve(file, asset, typeTreeSource));
+            template.FromTypeTree(resolver.Resolve(file, asset, typeTreeSource));
             root = SerializedObject.ReadFields(file, asset, template);
         }
 
@@ -286,20 +287,6 @@ internal static class StructuredAssetDump
 
     private static class OriginalFontDump
     {
-        public static byte[]? TryRead(string path)
-        {
-            using var input = File.OpenRead(path);
-            Span<byte> header = stackalloc byte[64];
-            int length = input.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
-            if (!UabeaDumpText.HasRoot(header[..length], "MonoBehaviour Base"u8))
-                return null;
-
-            input.Position = 0;
-            byte[] buffer = new byte[checked((int)input.Length)];
-            input.ReadExactly(buffer);
-            return buffer;
-        }
-
         public static AssetTypeTemplateField ReadTemplate(DumpReader reader, int depth = 0)
         {
             string indent = new(' ', depth);

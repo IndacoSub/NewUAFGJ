@@ -6,6 +6,15 @@ internal static class SerializedObject
 {
     public static byte[] ReadBytes(AssetsFile file, AssetFileInfo asset)
     {
+        // A later operation in the same batch must see the previously staged object.
+        if (asset.IsReplacerPreviewable)
+        {
+            Stream preview = asset.Replacer.GetPreviewStream();
+            byte[] current = new byte[checked((int)preview.Length)];
+            preview.ReadExactly(current);
+            return current;
+        }
+
         file.Reader.Position = asset.GetAbsoluteByteOffset(file);
         int size = checked((int)asset.ByteSize);
         byte[] serialized = file.Reader.ReadBytes(size);

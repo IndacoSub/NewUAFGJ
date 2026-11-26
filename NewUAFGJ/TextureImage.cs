@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Numerics;
 using BCnEncoder.Encoder;
@@ -49,7 +50,11 @@ internal static class TextureImage
     public static byte[] Encode(byte[] png, int width, int height, int format, int mipCount = 1)
     {
         int expectedSize = GetEncodedSize(width, height, format, mipCount);
-        byte[] pixels = DecodePng(png, width, height);
+        byte[] pixels;
+        using (PerformanceProfile.Measure(PerformanceProfile.PngDecoding))
+            pixels = DecodePng(png, width, height);
+
+        using var encodeTiming = PerformanceProfile.Measure(PerformanceProfile.TextureEncoding);
         byte[] encoded = format switch
         {
             Alpha8 => ExtractAlpha(pixels),
@@ -68,8 +73,13 @@ internal static class TextureImage
 
     private static int BlockCount(int dimension, int blockWidth) => (dimension - 1) / blockWidth + 1;
 
-    private static string DescribeFormat(int format) => format switch
+    internal static string DescribeFormat(int format) => format switch
     {
+        Alpha8 => "Alpha8 (1)",
+        Rgba32 => "RGBA32 (4)",
+        Dxt1 => "DXT1 / BC1 (10)",
+        Dxt5 => "DXT5 / BC3 (12)",
+        Bc7 => "BC7 (25)",
         2 => "ARGB4444 (2)",
         3 => "RGB24 (3)",
         7 => "RGB565 (7)",
@@ -110,17 +120,34 @@ internal static class TextureImage
         if (pngWidth != width || pngHeight != height)
             throw new InvalidDataException($"The PNG is {pngWidth}x{pngHeight}. Expected {width}x{height}.");
 
-        var pixels = new byte[checked(width * height * BytesPerPixel)];
+        int size = checked(width * height * BytesPerPixel);
         ImageResult image = ImageResult.FromMemory(png, ColorComponents.RedGreenBlueAlpha);
-        if (image.Width != width || image.Height != height || image.Data.Length != pixels.Length)
+        if (image.Width != width || image.Height != height || image.Data.Length != size)
             throw new InvalidDataException("The decoded PNG does not match its header.");
 
         // PNG scanlines start at the top, whereas the first Unity texture row is the bottom one.
         int stride = width * BytesPerPixel;
-        for (int row = 0; row < height; row++)
-            image.Data.AsSpan(row * stride, stride).CopyTo(pixels.AsSpan((height - 1 - row) * stride));
-
-        return pixels;
+        if (height > 1)
+        {
+            byte[] rowBuffer = ArrayPool<byte>.Shared.Rent(stride);
+            try
+            {
+                Span<byte> saved = rowBuffer.AsSpan(0, stride);
+                for (int row = 0; row < height / 2; row++)
+                {
+                    Span<byte> top = image.Data.AsSpan(row * stride, stride);
+                    Span<byte> bottom = image.Data.AsSpan((height - 1 - row) * stride, stride);
+                    top.CopyTo(saved);
+                    bottom.CopyTo(top);
+                    saved.CopyTo(bottom);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rowBuffer);
+            }
+        }
+        return image.Data;
     }
 
     private static byte[] EncodeMipChain(ReadOnlySpan<byte> pixels, int width, int height, CompressionFormat format, int mipCount, int expectedSize)

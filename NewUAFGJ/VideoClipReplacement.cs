@@ -7,10 +7,10 @@ internal sealed class VideoClipReplacement
     private readonly AssetTypeValueField clip;
     private readonly AssetTypeValueField size;
 
-    public VideoClipReplacement(AssetsFile file, AssetFileInfo asset, string? typeTreeSource)
+    public VideoClipReplacement(AssetsFile file, AssetFileInfo asset, ReplacementTypeTree resolver, string? typeTreeSource)
     {
         var template = new AssetTypeTemplateField();
-        template.FromTypeTree(ReplacementTypeTree.Resolve(file, asset, typeTreeSource));
+        template.FromTypeTree(resolver.Resolve(file, asset, typeTreeSource));
         clip = SerializedObject.ReadFields(file, asset, template);
         var source = clip["m_ExternalResources.m_Source"];
         var offset = clip["m_ExternalResources.m_Offset"];

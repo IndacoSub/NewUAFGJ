@@ -6,7 +6,7 @@ namespace NewUAFGJ;
 internal static class AtlasMaterialSync
 {
     public static Dictionary<long, byte[]> Apply(AssetsFile file, long atlasId, (int Width, int Height) size,
-        string? typeTreeSource)
+        ReplacementTypeTree resolver, string? typeTreeSource)
     {
         var templates = new Dictionary<int, AssetTypeTemplateField>();
         var updated = new Dictionary<long, byte[]>();
@@ -15,7 +15,7 @@ internal static class AtlasMaterialSync
             if (!templates.TryGetValue(asset.TypeIdOrIndex, out var template))
             {
                 template = new AssetTypeTemplateField();
-                template.FromTypeTree(ReplacementTypeTree.Resolve(file, asset, typeTreeSource));
+                template.FromTypeTree(resolver.Resolve(file, asset, typeTreeSource));
                 templates.Add(asset.TypeIdOrIndex, template);
             }
 

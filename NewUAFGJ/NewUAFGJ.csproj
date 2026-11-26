@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="NewUAFGJ.Tests" />
     <ProjectReference Include="../deps/AssetsTools.NET/AssetTools.NET/AssetsTools.NET.csproj" />
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
     <PackageReference Include="StbImageSharp" Version="2.30.16" />

@@ -14,10 +14,11 @@ internal sealed class TextureReplacement
     private readonly int mipCount;
     private readonly (int Width, int Height) replacementSize;
 
-    public TextureReplacement(AssetsFile file, AssetFileInfo asset, string? typeTreeSource, (int Width, int Height)? atlasSize)
+    public TextureReplacement(AssetsFile file, AssetFileInfo asset, ReplacementTypeTree resolver,
+        string? typeTreeSource, (int Width, int Height)? atlasSize)
     {
         var template = new AssetTypeTemplateField();
-        template.FromTypeTree(ReplacementTypeTree.Resolve(file, asset, typeTreeSource));
+        template.FromTypeTree(resolver.Resolve(file, asset, typeTreeSource));
         field = SerializedObject.ReadFields(file, asset, template);
         width = field["m_Width"].AsInt;
         height = field["m_Height"].AsInt;
@@ -62,22 +63,29 @@ internal sealed class TextureReplacement
     public StreamLocation? Stream { get; }
     public bool DimensionsChanged => replacementSize != (width, height);
 
-    public byte[] Encode(byte[] png)
+    public byte[] Encode(string path, byte[] png, TextureEncodingCache? cache)
     {
         int originalSize = Stream?.Size ?? imageData.AsByteArray.Length;
+        if (PerformanceProfile.Current is { } profile)
+        {
+            var (pngWidth, pngHeight) = TextureImage.ReadPngDimensions(png);
+            profile.Describe($"PNG {png.Length:N0} bytes, {pngWidth}x{pngHeight}. Original texture {TextureImage.DescribeFormat(format)}, {width}x{height}, {mipCount} mip(s), {originalSize:N0} encoded bytes.");
+        }
         if (TextureImage.GetEncodedSize(width, height, format, mipCount) != originalSize)
             throw new InvalidDataException("Encoded image size differs from the original texture data.");
 
-        return TextureImage.Encode(png, replacementSize.Width, replacementSize.Height, format, mipCount);
+        return cache is null
+            ? TextureImage.Encode(png, replacementSize.Width, replacementSize.Height, format, mipCount)
+            : cache.Encode(path, png, replacementSize.Width, replacementSize.Height, format, mipCount);
     }
 
-    public byte[] ReplaceInline(byte[] png, bool bigEndian)
+    public byte[] ReplaceInline(string path, byte[] png, bool bigEndian, TextureEncodingCache? cache)
     {
         var streamingMipmaps = field["m_StreamingMipmaps"];
         if (Stream is not null && !streamingMipmaps.IsDummy && streamingMipmaps.AsBool)
             throw new InvalidDataException("This texture uses mipmap streaming and cannot be stored inline.");
 
-        byte[] encoded = Encode(png);
+        byte[] encoded = Encode(path, png, cache);
         imageData.AsByteArray = encoded;
         if (DimensionsChanged)
         {

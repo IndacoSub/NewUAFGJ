@@ -40,11 +40,21 @@ internal static class UnityFixture
         Hash128 typeHash,
         Hash128 scriptHash,
         string unityVersion,
+        params long[] pathIds) =>
+        CreateMonoBehaviourAssets(22, bigEndian, hasTypeTree, typeHash, scriptHash, unityVersion, pathIds);
+
+    public static byte[] CreateMonoBehaviourAssets(
+        uint formatVersion,
+        bool bigEndian,
+        bool hasTypeTree,
+        Hash128 typeHash,
+        Hash128 scriptHash,
+        string unityVersion,
         params long[] pathIds)
     {
         var type = MakeMonoBehaviourType(typeHash);
         type.ScriptIdHash = scriptHash;
-        var file = CreateFile(22, hasTypeTree, bigEndian, type, unityVersion);
+        var file = CreateFile(formatVersion, hasTypeTree, bigEndian, type, unityVersion);
         foreach (long pathId in pathIds)
         {
             using var data = new MemoryStream();

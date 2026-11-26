@@ -9,7 +9,7 @@ using Xunit;
 
 namespace NewUAFGJ.Tests;
 
-public sealed class ReplacementTests : IDisposable
+public sealed partial class ReplacementTests : IDisposable
 {
     private const long SelectedPathId = -900000000000000001;
     private const long OtherPathId = long.MaxValue;
