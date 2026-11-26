@@ -453,6 +453,8 @@ internal static class AssetReplacement
             throw new InvalidDataException($"The Unity serialized file is truncated. Its header declares {file.Header.FileSize} bytes, but only {actualSize} are present.");
     }
 
+    internal static bool IsSupportedSerializedFormat(uint version) => version is >= 17 and <= 22;
+
     private static IEnumerable<Target> FindTargets(Dictionary<int, AssetsFile> files, AssetClassID classId,
         long? pathId, string? entry = null, AssetBundleFile? bundle = null)
     {
@@ -490,7 +492,7 @@ internal static class AssetReplacement
         AssetsFile file = target.File;
         AssetFileInfo asset = target.Asset;
         AssetClassID classId = replacement.ClassId;
-        if (file.Header.Version is < 17 or > 22)
+        if (!IsSupportedSerializedFormat(file.Header.Version))
             throw new InvalidDataException($"Serialized file format {file.Header.Version} is unsupported for {classId}. Expected versions 17–22.");
 
         byte[] data;

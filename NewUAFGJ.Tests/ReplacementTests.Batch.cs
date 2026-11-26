@@ -40,6 +40,38 @@ public sealed partial class ReplacementTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkipsUnsupportedSerializedFormatsDuringTypeTreeDiscovery(bool insideBundle)
+    {
+        string source = UnderTemp("sharedassets0.assets");
+        File.WriteAllBytes(source, MakeScriptFixture(SelectedPathId));
+
+        byte[] supported = MakeScriptFixture(123, hasTypeTree: true);
+        byte[] incompatible = UnityFixture.CreateMonoBehaviourAssets(23, false, true,
+            MonoBehaviourTypeHash, MonoBehaviourScriptHash, FixtureUnityVersion, 456);
+        int extendedTypeTreeMagic = incompatible.AsSpan().IndexOf("mhtt"u8);
+        Assert.True(extendedTypeTreeMagic >= 0);
+        incompatible[extendedTypeTreeMagic] ^= 0xff;
+
+        if (insideBundle)
+        {
+            UnityFixture.WriteBundle(UnderTemp("schemas.bundle"), AssetBundleCompressionType.LZ4,
+                ("CAB-unrelated", incompatible, true), ("CAB-supported", supported, true));
+        }
+        else
+        {
+            File.WriteAllBytes(UnderTemp("unrelated.assets"), incompatible);
+            File.WriteAllBytes(UnderTemp("supported.assets"), supported);
+        }
+
+        var result = await RunCli(source, MakeScriptDump(), SelectedPathId.ToString());
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        AssertMonoBehaviourReplacement(source, bigEndian: false);
+    }
+
+    [Theory]
     [InlineData("type hash")]
     [InlineData("script hash")]
     [InlineData("Unity version")]
@@ -265,19 +297,24 @@ public sealed partial class ReplacementTests
         Assert.False(File.Exists(second));
     }
 
-    [Fact]
-    public async Task BatchWaitsOneSecondBetweenOperationsByDefault()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task BatchWaitsOnlyWhenASameSourceDelayIsRequested(int? cooldownSeconds)
     {
         string source = UnderTemp("source.assets");
         File.WriteAllBytes(source, UnityFixture.CreateAssets((1, "first", OriginalPayload),
             (2, "second", OriginalPayload)));
         string replacement = MakeReplacement();
         string plan = UnderTemp("cooldown.json");
-        File.WriteAllText(plan, JsonSerializer.Serialize(new
+        var settings = new Dictionary<string, object>
         {
-            sources = new[] { new { source, operations = new[] { new { replacement, pathId = 1 },
+            ["sources"] = new[] { new { source, operations = new[] { new { replacement, pathId = 1 },
                 new { replacement, pathId = 2 } } } }
-        }));
+        };
+        if (cooldownSeconds is { } seconds)
+            settings.Add("sameSourceDelaySeconds", seconds);
+        File.WriteAllText(plan, JsonSerializer.Serialize(settings));
 
         var result = await RunCli("batch", plan);
 
@@ -286,7 +323,10 @@ public sealed partial class ReplacementTests
         string line = result.Output.Split('\n').Single(output => output.StartsWith(prefix, StringComparison.Ordinal));
         using var json = JsonDocument.Parse(line[prefix.Length..]);
         double delay = json.RootElement.GetProperty("timings").GetProperty("Same-source cooldown").GetDouble();
-        Assert.True(delay >= 950, $"Expected a one-second cooldown, recorded {delay} ms.");
+        if (cooldownSeconds is null)
+            Assert.Equal(0.0, delay);
+        else
+            Assert.True(delay >= 950, $"Expected a one-second cooldown, recorded {delay} ms.");
     }
 
     [Theory]

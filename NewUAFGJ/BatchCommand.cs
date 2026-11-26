@@ -25,7 +25,7 @@ internal sealed record SourceBatch(string Source, ReplacementOperation[] Operati
     string? Name = null, bool DeferCompression = false, string? DiscoveryPath = null);
 
 internal sealed record BatchPlan(SourceBatch[] Sources, string[]? TypeTreeRoots = null, int MaxWorkers = 1,
-    double SameSourceDelaySeconds = 1.0);
+    double SameSourceDelaySeconds = 0.0);
 
 internal static class BatchCommand
 {

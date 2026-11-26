@@ -184,7 +184,7 @@ internal sealed class ReplacementTypeTree
                         : explicitDonors.TryGetValue(path, out var requested) ? requested.Value
                         : ReadDonor(path, monoOnly: true);
                 }
-                catch (Exception error) when (error is IOException or ArgumentException or NotSupportedException)
+                catch (Exception error)
                 {
                     throw new InvalidDataException($"Could not inspect TypeTree candidate '{original}': {error.Message}", error);
                 }
@@ -215,11 +215,18 @@ internal sealed class ReplacementTypeTree
         if (signature[..length].StartsWith("UnityFS\0"u8))
         {
             using var input = new BundleInput(stream, measureLoading: false);
+            AssetBundleFile bundle = input.Bundle;
             List<Definition> definitions = [];
-            foreach (var (index, file) in input.ReadSerializedEntries())
+            for (int index = 0; index < bundle.BlockAndDirInfo.DirectoryInfos.Count; index++)
             {
+                bundle.GetFileRange(index, out long offset, out long size);
+                if (!HasSupportedFormat(bundle.DataReader, offset, size) || !bundle.IsAssetsFile(index))
+                    continue;
+
+                AssetsFile file = BundleHelper.LoadAssetFromBundle(bundle, index);
                 using var reader = file.Reader;
-                AddDefinitions(definitions, file, $"{path}:{input.Bundle.GetFileName(index)}", monoOnly);
+                AssetReplacement.CheckFileSize(file);
+                AddDefinitions(definitions, file, $"{path}:{bundle.GetFileName(index)}", monoOnly);
             }
             return new Donor(definitions);
         }
@@ -242,8 +249,14 @@ internal sealed class ReplacementTypeTree
         }
 
         using var assetsReader = new AssetsFileReader(stream);
+        bool supported = HasSupportedFormat(assetsReader, 0, stream.Length);
+        if (monoOnly && !supported)
+            return new Donor([]);
         if (AssetsFile.IsAssetsFile(assetsReader, 0, stream.Length))
         {
+            if (!supported)
+                return new Donor([]);
+
             var file = new AssetsFile();
             assetsReader.Position = 0;
             file.Read(assetsReader);
@@ -256,6 +269,17 @@ internal sealed class ReplacementTypeTree
         if (monoOnly)
             return new Donor([]);
         throw new InvalidDataException("The TypeTree source must be a Unity serialized file, UnityFS bundle or TPK class package.");
+    }
+
+    private static bool HasSupportedFormat(AssetsFileReader reader, long offset, long length)
+    {
+        if (length < 0x30)
+            return false;
+
+        // The format field is always big-endian and precedes the TypeTree metadata.
+        reader.BigEndian = true;
+        reader.Position = offset + 8;
+        return AssetReplacement.IsSupportedSerializedFormat(reader.ReadUInt32());
     }
 
     private static void AddDefinitions(List<Definition> definitions, AssetsFile file, string path, bool monoOnly)

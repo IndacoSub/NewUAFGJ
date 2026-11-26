@@ -54,6 +54,8 @@ internal static class UnityFixture
     {
         var type = MakeMonoBehaviourType(typeHash);
         type.ScriptIdHash = scriptHash;
+        type.ExtTypeHash = Hash128.NewBlankHash();
+        type.TypeBlobIsDefinition = true;
         var file = CreateFile(formatVersion, hasTypeTree, bigEndian, type, unityVersion);
         foreach (long pathId in pathIds)
         {
