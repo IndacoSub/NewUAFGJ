@@ -10,6 +10,7 @@ namespace NewUAFGJ;
 internal static class TextureImage
 {
     internal const int Alpha8 = 1;
+    private const int Rgb24 = 3;
     private const int Rgba32 = 4;
     private const int Dxt1 = 10;
     private const int Dxt5 = 12;
@@ -32,10 +33,11 @@ internal static class TextureImage
         (int blockWidth, int bytesPerBlock) = format switch
         {
             Alpha8 => (1, 1),
+            Rgb24 => (1, 3),
             Rgba32 => (1, BytesPerPixel),
             Dxt1 => (CompressedBlockWidth, 8),
             Dxt5 or Bc7 => (CompressedBlockWidth, 16),
-            _ => throw new InvalidDataException($"Texture format {DescribeFormat(format)} is unsupported. Expected Alpha8, RGBA32, DXT1 (BC1), DXT5 (BC3) or BC7.")
+            _ => throw new InvalidDataException($"Texture format {DescribeFormat(format)} is unsupported. Expected Alpha8, RGB24, RGBA32, DXT1 (BC1), DXT5 (BC3) or BC7.")
         };
         int size = 0;
         for (int level = 0; level < mipCount; level++)
@@ -58,6 +60,7 @@ internal static class TextureImage
         byte[] encoded = format switch
         {
             Alpha8 => ExtractAlpha(pixels),
+            Rgb24 => EncodeRgb24(pixels, width, height, mipCount, expectedSize),
             Rgba32 when mipCount == 1 => pixels,
             Rgba32 => EncodeMipChain(pixels, width, height, CompressionFormat.Rgba, mipCount, expectedSize),
             Dxt1 => EncodeMipChain(pixels, width, height, CompressionFormat.Bc1WithAlpha, mipCount, expectedSize),
@@ -76,12 +79,12 @@ internal static class TextureImage
     internal static string DescribeFormat(int format) => format switch
     {
         Alpha8 => "Alpha8 (1)",
+        Rgb24 => "RGB24 (3)",
         Rgba32 => "RGBA32 (4)",
         Dxt1 => "DXT1 / BC1 (10)",
         Dxt5 => "DXT5 / BC3 (12)",
         Bc7 => "BC7 (25)",
         2 => "ARGB4444 (2)",
-        3 => "RGB24 (3)",
         7 => "RGB565 (7)",
         13 => "RGBA4444 (13)",
         28 => "DXT1Crunched (28)",
@@ -96,6 +99,17 @@ internal static class TextureImage
             alpha[i] = pixels[i * BytesPerPixel + 3];
 
         return alpha;
+    }
+
+    private static byte[] EncodeRgb24(ReadOnlySpan<byte> pixels, int width, int height, int mipCount, int expectedSize)
+    {
+        for (int alpha = 3; alpha < pixels.Length; alpha += BytesPerPixel)
+        {
+            if (pixels[alpha] != byte.MaxValue)
+                throw new InvalidDataException("RGB24 cannot store transparency in the replacement PNG.");
+        }
+
+        return EncodeMipChain(pixels, width, height, CompressionFormat.Rgb, mipCount, expectedSize);
     }
 
     internal static (int Width, int Height) ReadPngDimensions(ReadOnlySpan<byte> header)

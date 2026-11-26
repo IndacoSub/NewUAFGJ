@@ -433,6 +433,60 @@ public sealed partial class ReplacementTests : IDisposable
         AssertNoStagingFile(source);
     }
 
+    [Theory]
+    [InlineData(1, 96)]
+    [InlineData(2, 120)]
+    public async Task StoresRgb24PixelsInUnityRowOrderAndPreservesMipCount(int mipCount, int size)
+    {
+        string source = UnderTemp("rgb24.assets");
+        File.WriteAllBytes(source, UnityFixture.CreateTextureAssets(4, 8, size, "", 0, SelectedPathId,
+            format: 3, inlineData: new byte[size], mipCount: mipCount));
+        string png = UnderTemp("opaque.png");
+        File.WriteAllBytes(png, Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAICAYAAADeM14FAAAAHElEQVR4nGPkTrz/nwEJMDGgAcICjL8leSk1AwC/rQR52pjtdAAAAABJRU5ErkJggg=="));
+
+        var result = await RunCli(source, png);
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        using var reader = new AssetsFileReader(new MemoryStream(ReadObject(source, SelectedPathId)));
+        AssertAlignedString(reader, "test texture");
+        Assert.Equal(4, reader.ReadInt32());
+        Assert.Equal(8, reader.ReadInt32());
+        Assert.Equal(size, reader.ReadInt32());
+        Assert.Equal(0, reader.ReadInt32());
+        Assert.Equal(3, reader.ReadInt32());
+        Assert.Equal(mipCount, reader.ReadInt32());
+        Assert.Equal(1, reader.ReadInt32());
+        Assert.Equal(2, reader.ReadInt32());
+        Assert.Equal(size, reader.ReadInt32());
+
+        int halfMipPixels = 16;
+        for (int level = 0; level < mipCount; level++)
+        {
+            for (int i = 0; i < halfMipPixels; i++)
+                Assert.Equal(new byte[] { 251, 25, 13 }, reader.ReadBytes(3));
+            for (int i = 0; i < halfMipPixels; i++)
+                Assert.Equal(new byte[] { 11, 97, 223 }, reader.ReadBytes(3));
+            halfMipPixels /= 4;
+        }
+        AssertNoStagingFile(source);
+    }
+
+    [Fact]
+    public async Task RejectsTransparencyWhenReplacingRgb24()
+    {
+        string source = UnderTemp("rgb24.assets");
+        byte[] original = UnityFixture.CreateTextureAssets(4, 8, 96, "", 0, SelectedPathId,
+            format: 3, inlineData: new byte[96]);
+        File.WriteAllBytes(source, original);
+
+        var result = await RunCli(source, MakeTexturePng());
+
+        AssertFailure(result, "RGB24 cannot store transparency in the replacement PNG.");
+        Assert.Equal(original, File.ReadAllBytes(source));
+        AssertNoStagingFile(source);
+    }
+
     [Fact]
     public async Task ResizesStreamedAlpha8AtlasInlineAndPreservesTheResource()
     {
