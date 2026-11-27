@@ -204,7 +204,8 @@ internal static class UnityFixture
         });
     }
 
-    public static byte[] CreateLegacyTextMeshProAssets(long pathId) =>
+    public static byte[] CreateLegacyTextMeshProAssets(
+        long pathId, byte[]? originalFile = null, long atlasPathId = 44, float atlasWidth = 256) =>
         CreateStructuredAsset(pathId, AssetClassID.MonoBehaviour,
         [
             (0, "MonoBehaviour", "Base", -1, false, false),
@@ -215,8 +216,9 @@ internal static class UnityFixture
             (1, "TMP_Glyph", "m_glyphInfoList", -1, false, false),
             (2, "Array", "Array", -1, true, false),
             (3, "int", "size", 4, false, false),
-            (3, "TMP_Glyph", "data", 4, false, false),
+            (3, "TMP_Glyph", "data", 8, false, false),
             (4, "int", "id", 4, false, false),
+            (4, "float", "xAdvance", 4, false, false),
             (1, "KerningTable", "m_kerningInfo", -1, false, false),
             (2, "KerningPair", "kerningPairs", -1, false, false),
             (3, "Array", "Array", -1, true, false),
@@ -227,14 +229,15 @@ internal static class UnityFixture
         writer =>
         {
             WriteAlignedBytes(writer, "test font"u8.ToArray());
-            writer.Write(256f);
+            writer.Write(atlasWidth);
             writer.Write(0);
-            writer.Write(44L);
+            writer.Write(atlasPathId);
             writer.Write(1);
             writer.Write(65);
+            writer.Write(3.25f);
             writer.Write(1);
             writer.Write(2f);
-        });
+        }, originalFile);
 
     private static byte[] CreateFontFixture(TypeTreeType type, long pathId, Action<AssetsFileWriter> writeFont,
         bool hasTypeTree = true)
@@ -528,13 +531,27 @@ internal static class UnityFixture
     private static byte[] CreateStructuredAsset(
         long pathId, AssetClassID classId,
         (byte Level, string Type, string Name, int Size, bool IsArray, bool IsAligned)[] layout,
-        Action<AssetsFileWriter> writeAsset)
+        Action<AssetsFileWriter> writeAsset, byte[]? originalFile = null)
     {
-        var file = CreateFile(22, true, false, MakeType(classId, Hash128.NewBlankHash(), layout));
+        var type = MakeType(classId, Hash128.NewBlankHash(), layout);
+        using var reader = originalFile is null ? null : new AssetsFileReader(new MemoryStream(originalFile));
+        AssetsFile file;
+        int typeIndex = 0;
+        if (reader is null)
+        {
+            file = CreateFile(22, true, false, type);
+        }
+        else
+        {
+            file = new AssetsFile();
+            file.Read(reader);
+            typeIndex = file.Metadata.TypeTreeTypes.Count;
+            file.Metadata.TypeTreeTypes.Add(type);
+        }
         using var data = new MemoryStream();
         using var writer = new AssetsFileWriter(data);
         writeAsset(writer);
-        AddAsset(file, pathId, data.ToArray());
+        AddAsset(file, pathId, data.ToArray(), typeIndex);
         using var stream = new MemoryStream();
         WriteFile(file, stream);
         return stream.ToArray();

@@ -6,12 +6,14 @@ namespace NewUAFGJ;
 
 internal sealed record ReplacementOperation(string Replacement, long? PathId = null, string? FileId = null,
     string? TypeTreeSource = null, bool Raw = false, bool ResizeAtlas = false,
-    bool SyncAtlasMaterials = false, string? Entry = null, string? Context = null)
+    bool SyncAtlasMaterials = false, string? Entry = null, string? Context = null, bool Downscale = false)
 {
     internal void Validate()
     {
         if (FileId is not (null or "-" or "0"))
             throw new ArgumentException("FileID must be '-' or '0'. External file references are unsupported.");
+        if (Downscale && (Raw || ResizeAtlas))
+            throw new ArgumentException("--downscale cannot be combined with --raw or --resize-atlas.");
         if (Raw && (ResizeAtlas || TypeTreeSource is not null))
             throw new ArgumentException("--raw cannot be combined with an atlas resize or a TypeTree source.");
         if (SyncAtlasMaterials && !ResizeAtlas)

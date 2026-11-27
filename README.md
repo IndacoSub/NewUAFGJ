@@ -1,16 +1,10 @@
-# NewUAFGJ
+# NewerUAFGJ
 
-## About
+NewerUAFGJ is a personal-use, and unofficial, .NET 10 command-line tool for replacing assets in Unity games. 
 
-**NewUAFGJ** is a custom Unity asset manipulation and automation tool developed by **Team DAIX** for personal use.
+It is a rewrite of NewUAFGJ (found in the 'main' branch), itself a rewrite of UAFGJ. 
 
-The [original UAFGJ](https://github.com/IndacoSub/UABEA/tree/custom/UAFGJ) was created to enable Team DAIX's translation of Danganronpa V3 to support the Nintendo Switch version.
-
-The updated project was created as part of an **amateur, personal translation project for Tokyo Psychodemic**.
-
-This is an **unofficial fan translation**. It is **not official, sponsored, endorsed, authorized, or affiliated** in any way with the developers, publishers, or rights holders of Tokyo Psychodemic.
-
-NewUAFGJ itself is a development and automation tool used to assist with the processing of locally stored game assets.
+It works with Unity serialized files (formats 17–22) and UnityFS bundles with uncompressed, LZ4 or LZMA data.
 
 > **AI USAGE DISCLAIMER**
 >
@@ -21,91 +15,114 @@ NewUAFGJ itself is a development and automation tool used to assist with the pro
 >
 > This disclaimer also applies to this README and other documentation that may have been generated or assisted by AI.
 
-## What we did
+## Build
 
-The project started from an older UABEA / AssetsTools.NET based workflow and was progressively rebuilt into a more focused standalone tool.
+Install the .NET SDK specified in [global.json](global.json).
 
-The main goal was to create a reliable automated pipeline for the personal translation work, reducing the amount of repetitive manual editing required when working with Unity assets.
+NewerUAFGJ uses AssetsTools.NET by nesrak1 to read and write Unity assets.
 
-### Unity AssetBundle handling
+The build uses the revision pinned by the Git submodule. [AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET)
 
-NewUAFGJ can locate and modify assets contained inside Unity AssetBundles.
+```sh
+git submodule update --init --recursive
+dotnet build NewUAFGJ/NewUAFGJ.csproj -c Release
+dotnet test --solution NewUAFGJ.slnx -c Release
+```
 
-Assets can be identified using serialized information such as PathID and asset type, allowing specific resources to be replaced programmatically.
+On Windows, the Release executable is at `NewUAFGJ/bin/Release/net10.0/NewUAFGJ.exe`.
 
-The writing process uses temporary staging files and validation before replacing the original bundle.
+## Replace an asset
 
-### Texture2D importing
+```sh
+dotnet run --project NewUAFGJ -c Release -- game.bundle translation.txt -900000000000000001
+dotnet run --project NewUAFGJ -c Release -- game.bundle logo.png 127
+```
 
-A custom PNG import pipeline was implemented for Unity `Texture2D` assets.
+Use a working copy for single replacements. The tool validates the staged file before replacing the source and preserves bundle compression. A PathID is a signed 64-bit integer. For textures, text payloads and video clips, omit it or pass `-` when there is a single matching asset. Structured dumps require an explicit PathID. FileID `0` selects a local object and `-` leaves FileID unspecified.
 
-The importer can:
+| Replacement | Input |
+| --- | --- |
+| TextAsset | Payload bytes or a UTF-8 UABEA TextAsset dump. Use `--raw` to import a file verbatim. |
+| Structured asset | UABEA dump of a MonoBehaviour, Sprite, RectTransform, GameObject, Font or Material. This includes supported TextMeshPro glyph tables. |
+| Texture2D | PNG. Supports RGB24, RGBA32, BC1, BC3, BC7 and single-mip Alpha8. The importer preserves the texture format and mip count. |
+| VideoClip | MP4. A bundled clip must reference a complete MP4 resource from offset zero. Standalone MP4 resources are also supported. |
 
-* load PNG images;
-* resize them when necessary;
-* preserve the required texture orientation;
-* update the relevant Unity `Texture2D` fields;
-* replace embedded image data;
-* handle compressed formats such as **DXT1 / BC1**.
+Use `--downscale` to fit a larger color PNG with compatible proportions to the target texture. Use `--resize-atlas` to take an Alpha8 atlas's dimensions from the PNG. Add `--sync-atlas-materials` to update `_TextureWidth` and `_TextureHeight` on materials in the same serialized entry whose local `_MainTex` references that atlas. Import the corresponding TextMeshPro dump alongside its atlas.
 
-Dedicated encoding logic was also added for formats that are not supported by the managed encoder available in the installed AssetsTools.NET.Texture runtime.
+### Text and structured dumps
 
-### TextAsset replacement
+An ordinary TextAsset replacement supplies the bytes for `m_Script`. For UABEA TextAsset dumps, the importer reads the quoted `m_Script` field and decodes its escapes. Use `--raw` if the file itself is the payload, even when its contents resemble a dump. An empty payload clears the TextAsset.
 
-The tool can replace serialized Unity `TextAsset` contents programmatically.
+Keep the field structure of a structured dump and preserve its object references. Modern TextMeshPro dumps support changing the glyph and character tables and the used and free glyph rectangles. Legacy TextMeshPro dumps support changing glyph and kerning tables.
 
-This is particularly useful for translating game text while keeping the surrounding Unity asset structure intact.
+### Textures and video
 
-### MonoBehaviour processing
+PNG replacements use the target texture dimensions by default. RGB24 requires opaque pixels. Alpha8 uses the PNG alpha channel. Use the atlas options above when changing dimensions, and make sure the font dump describes the new atlas layout.
 
-NewUAFGJ also handles serialized `MonoBehaviour` data.
+For same-size streamed textures in UnityFS, the tool replaces the texture's byte range in the bundle resource. A resized atlas is stored inline. In standalone serialized files, replacing a sidecar-backed texture stores the replacement inline when mipmap streaming is disabled.
 
-A significant part of the work involved Unity TypeTrees and custom serialized classes, since generic class database information is not always sufficient for complex game-specific MonoBehaviours.
+For video, use an MP4 with media properties compatible with the original. The importer updates the referenced resource size and preserves the other clip metadata.
 
-The project therefore makes use of managed assembly information when generating the structures required to read and write custom serialized data.
+### Planned support
 
-### AssetsTools.NET migration
+- TGA (`.tga`) as an input format for Texture2D replacements.
 
-The original code relied on an older generation of AssetsTools.NET APIs.
+## TypeTrees and classdata.tpk
 
-The project was progressively migrated to the newer **AssetsTools.NET 3.x** API.
+An embedded TypeTree supplies the serialized layout. For supported native classes without an embedded tree, pass a compatible serialized file, UnityFS bundle or TPK class package with `--typetree-source`. A TPK entry must match the target's Unity version and type hash.
 
-This required updating several parts of the project, including:
+`classdata.tpk` is optional. The CLI reads a TPK when explicitly supplied as the TypeTree source. Its filename is arbitrary. Relative paths resolve from the current working directory in a single command and from the plan directory in a batch.
 
-* asset replacement;
-* AssetBundle writing;
-* compression handling;
-* asset offsets;
-* TypeTree handling;
-* texture encoding;
-* MonoBehaviour serialization.
+```sh
+dotnet run --project NewUAFGJ -c Release -- --typetree-source schemas/classdata.tpk game.assets logo.png 127
+```
 
-The migration was performed to reduce dependency on obsolete APIs and provide a cleaner foundation for the tool.
+A stripped MonoBehaviour requires a compatible embedded TypeTree. The Unity version, serialized format, TypeID, TypeHash and ScriptIdHash must match. The tool can discover matching trees in game files and bundles. Use `--typetree-root` or batch `typeTreeRoots` to direct the search, or pass an explicit donor with `--typetree-source`. Conflicting definitions stop the import. A TPK cannot supply a MonoBehaviour layout. For supported TextMeshPro fonts, a complete original UABEA dump can also serve as the schema when it reproduces the original serialized bytes exactly.
 
-## Why this project exists
+## Batch replacements
 
-The tool automates repetitive asset modification tasks so that translated files can be processed consistently and efficiently.
+Group replacements by source so the tool opens, writes and compresses each bundle once. Paths are relative to the plan. Create output directories before running it.
 
-It is primarily a private utility for the contributors to this repository rather than a general-purpose Unity modding framework.
+```json
+{
+  "typeTreeRoots": ["Game_Data"],
+  "maxWorkers": 1,
+  "sources": [
+    {
+      "source": "Game_Data/example.bundle",
+      "output": "staging/example.bundle",
+      "operations": [
+        { "replacement": "translation.txt", "pathId": -900000000000000001 },
+        { "replacement": "logo.png", "pathId": 127, "entry": "CAB-example" }
+      ]
+    }
+  ]
+}
+```
 
-## Scope and limitations
+```sh
+dotnet run --project NewUAFGJ -c Release -- --profile batch plan.json
+```
 
-Compatibility with miscellaneous Unity games, Unity versions, AssetBundles, or custom MonoBehaviour structures is not guaranteed.
+Operations within a source run in order. Each source is published after all its replacements pass verification. A plan with several sources can produce outputs for successful sources before another source fails. Omit `output` for in-place replacement. Set `maxWorkers` to process independent sources concurrently and `sameSourceDelaySeconds` to add an optional pause within each source.
 
-Serialized `MonoBehaviour` layouts and TypeTrees can vary considerably between games and Unity versions.
+Use `entry` to select a serialized entry in a bundle. Individual operations also accept `fileId`, `typeTreeSource`, `raw`, `downscale`, `resizeAtlas` and `syncAtlasMaterials`. Each of those properties is optional.
 
-## Credits
+Use `--profile` for timing details on both single and batch commands. It reports stages such as decoding, texture encoding, bundle compression and verification.
 
-Developed by **Team DAIX**.
+## Troubleshooting
 
-The project makes use of the [AssetsTools.NET](https://github.com/nesrak1/AssetsTools.NET) ecosystem and other open-source libraries and tools, by nesrak1.
+- If several objects match, provide a PathID. In batch mode, use `entry` when the same PathID appears in multiple serialized entries.
+- If TypeTree resolution fails, check the target's Unity version and the donor's layout. For stripped MonoBehaviours, point the search at the original game files that contain matching embedded trees.
+- If a PNG has different dimensions, check whether it is a larger color image eligible for `--downscale` or an Alpha8 atlas that needs an explicit resize.
+- If an interrupted import leaves a `<source>.newuafgj.tmp` file, confirm that no process is using it before deleting it and retrying.
+
+Success returns exit code 0. Errors return exit code 1 and report a `[FATAL]` diagnostic.
 
 ## Legal / Rights Notice
 
 This project does not claim ownership of any third-party intellectual property contained within any game.
 
----
+## License
 
-### License
-
-This repository is licensed under the ISC license.
+[ISC License](LICENSE)

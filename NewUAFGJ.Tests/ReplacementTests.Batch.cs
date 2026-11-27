@@ -217,6 +217,98 @@ public sealed partial class ReplacementTests
     }
 
     [Fact]
+    public async Task ExtendsALegacyTmpFontAndSynchronizesItsAtlasMaterialInOneBatch()
+    {
+        const long atlasId = 44, fontId = 45, materialId = 46, externalMaterialId = 47;
+        string source = UnderTemp("legacy-font.bundle");
+        string output = UnderTemp("patched-font.bundle");
+        string resourceName = UnityFixture.EntryName + ".resS";
+        byte[] atlas = UnityFixture.CreateTextureAssets(2, 8, 16,
+            $"archive:/{UnityFixture.EntryName}/{resourceName}", 8, atlasId, format: 1);
+        byte[] font = UnityFixture.CreateLegacyTextMeshProAssets(fontId, atlas, atlasId, atlasWidth: 2);
+        byte[] assets = UnityFixture.WithAtlasMaterials(font, atlasId, materialId, externalMaterialId);
+        byte[] resource = Enumerable.Range(0, 40).Select(value => (byte)value).ToArray();
+        UnityFixture.WriteBundle(source, AssetBundleCompressionType.LZ4,
+            (UnityFixture.EntryName, assets, true), (resourceName, resource, false));
+        byte[] original = File.ReadAllBytes(source);
+        string dump = UnderTemp("legacy-font.txt");
+        File.WriteAllText(dump, """
+            0 MonoBehaviour Base
+             1 string m_Name = "test font"
+             0 FaceInfo m_fontInfo
+              0 float AtlasWidth = 4
+             0 PPtr<$Texture2D> atlas
+              0 int m_FileID = 0
+              0 SInt64 m_PathID = 44
+             0 TMP_Glyph m_glyphInfoList
+              1 Array Array (2 items)
+               0 int size = 2
+               [0]
+                0 TMP_Glyph data
+                 0 int id = 65
+                 0 float xAdvance = 3.25
+               [1]
+                0 TMP_Glyph data
+                 0 int id = 232
+                 0 float xAdvance = 2.5
+             0 KerningTable m_kerningInfo
+              0 KerningPair kerningPairs
+               0 Array Array (1 items)
+                0 int size = 1
+                [0]
+                 0 KerningPair data
+                  0 float xOffset = 2
+            """);
+
+        var result = await RunBatch([new { source, output, operations = new object[]
+        {
+            new { pathId = atlasId, replacement = MakeTexturePng(), resizeAtlas = true, syncAtlasMaterials = true },
+            new { pathId = fontId, replacement = dump }
+        } }]);
+
+        Assert.True(result.ExitCode == 0, result.Error);
+        Assert.Equal(original, File.ReadAllBytes(source));
+        var manager = new AssetsManager();
+        try
+        {
+            var bundle = manager.LoadBundleFile(output);
+            Assert.Equal(AssetBundleCompressionType.LZ4, bundle.originalCompression);
+            Assert.Equal(resource, BundleHelper.LoadAssetDataFromBundle(bundle.file, resourceName));
+            var file = manager.LoadAssetsFileFromBundle(bundle, UnityFixture.EntryName);
+            var patchedAtlas = manager.GetBaseField(file, atlasId);
+            Assert.Equal(4, patchedAtlas["m_Width"].AsInt);
+            Assert.Equal(8, patchedAtlas["m_Height"].AsInt);
+            Assert.Equal(1, patchedAtlas["m_TextureFormat"].AsInt);
+            Assert.Equal(0U, patchedAtlas["m_StreamData.size"].AsUInt);
+            Assert.Equal(Enumerable.Repeat((byte)85, 16).Concat(Enumerable.Repeat((byte)255, 16)),
+                patchedAtlas["image data"].AsByteArray);
+
+            var patchedFont = manager.GetBaseField(file, fontId);
+            Assert.Equal(atlasId, patchedFont["atlas.m_PathID"].AsLong);
+            Assert.Equal(4f, patchedFont["m_fontInfo.AtlasWidth"].AsFloat);
+            Assert.Collection(patchedFont["m_glyphInfoList.Array"].Children,
+                glyph => AssertGlyph(glyph, 65, 3.25f),
+                glyph => AssertGlyph(glyph, 232, 2.5f));
+            Assert.Equal(2f, Assert.Single(patchedFont["m_kerningInfo.kerningPairs.Array"].Children)["xOffset"].AsFloat);
+            Assert.Equal(new[] { 4f, 8f }, MaterialDimensions(materialId));
+            Assert.Equal(new[] { 1f, 1f }, MaterialDimensions(externalMaterialId));
+
+            float[] MaterialDimensions(long pathId) => manager.GetBaseField(file, pathId)["m_SavedProperties.m_Floats.Array"]
+                .Children.Select(property => property["second"].AsFloat).ToArray();
+        }
+        finally
+        {
+            manager.UnloadAll();
+        }
+
+        static void AssertGlyph(AssetTypeValueField glyph, int id, float advance)
+        {
+            Assert.Equal(id, glyph["id"].AsInt);
+            Assert.Equal(advance, glyph["xAdvance"].AsFloat);
+        }
+    }
+
+    [Fact]
     public async Task ASecondVideoReplacementUsesTheFirstStagedSize()
     {
         string source = UnderTemp("video.bundle");

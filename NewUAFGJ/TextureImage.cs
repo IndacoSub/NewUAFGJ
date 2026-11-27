@@ -7,6 +7,10 @@ using StbImageSharp;
 
 namespace NewUAFGJ;
 
+internal enum PngResampling { None, Linear, Srgb }
+
+internal readonly record struct TextureEncoding(int Width, int Height, int Format, int Mips, PngResampling Resampling);
+
 internal static class TextureImage
 {
     internal const int Alpha8 = 1;
@@ -49,18 +53,26 @@ internal static class TextureImage
         return size;
     }
 
-    public static byte[] Encode(byte[] png, int width, int height, int format, int mipCount = 1)
+    public static byte[] Encode(byte[] png, (int Width, int Height) pngSize, TextureEncoding encoding)
     {
+        var (width, height, format, mipCount, resampling) = encoding;
         int expectedSize = GetEncodedSize(width, height, format, mipCount);
         byte[] pixels;
         using (PerformanceProfile.Measure(PerformanceProfile.PngDecoding))
-            pixels = DecodePng(png, width, height);
+            pixels = DecodePng(png, pngSize.Width, pngSize.Height);
+        if (format == Rgb24)
+            RequireOpaque(pixels);
+        if (resampling != PngResampling.None)
+        {
+            using var resizeTiming = PerformanceProfile.Measure(PerformanceProfile.PngDownscaling);
+            pixels = TextureDownsampling.Resize(pixels, pngSize, encoding);
+        }
 
         using var encodeTiming = PerformanceProfile.Measure(PerformanceProfile.TextureEncoding);
         byte[] encoded = format switch
         {
             Alpha8 => ExtractAlpha(pixels),
-            Rgb24 => EncodeRgb24(pixels, width, height, mipCount, expectedSize),
+            Rgb24 => EncodeMipChain(pixels, width, height, CompressionFormat.Rgb, mipCount, expectedSize),
             Rgba32 when mipCount == 1 => pixels,
             Rgba32 => EncodeMipChain(pixels, width, height, CompressionFormat.Rgba, mipCount, expectedSize),
             Dxt1 => EncodeMipChain(pixels, width, height, CompressionFormat.Bc1WithAlpha, mipCount, expectedSize),
@@ -101,15 +113,13 @@ internal static class TextureImage
         return alpha;
     }
 
-    private static byte[] EncodeRgb24(ReadOnlySpan<byte> pixels, int width, int height, int mipCount, int expectedSize)
+    private static void RequireOpaque(ReadOnlySpan<byte> pixels)
     {
         for (int alpha = 3; alpha < pixels.Length; alpha += BytesPerPixel)
         {
             if (pixels[alpha] != byte.MaxValue)
                 throw new InvalidDataException("RGB24 cannot store transparency in the replacement PNG.");
         }
-
-        return EncodeMipChain(pixels, width, height, CompressionFormat.Rgb, mipCount, expectedSize);
     }
 
     internal static (int Width, int Height) ReadPngDimensions(ReadOnlySpan<byte> header)
@@ -130,10 +140,6 @@ internal static class TextureImage
 
     private static byte[] DecodePng(byte[] png, int width, int height)
     {
-        var (pngWidth, pngHeight) = ReadPngDimensions(png);
-        if (pngWidth != width || pngHeight != height)
-            throw new InvalidDataException($"The PNG is {pngWidth}x{pngHeight}. Expected {width}x{height}.");
-
         int size = checked(width * height * BytesPerPixel);
         ImageResult image = ImageResult.FromMemory(png, ColorComponents.RedGreenBlueAlpha);
         if (image.Width != width || image.Height != height || image.Data.Length != size)

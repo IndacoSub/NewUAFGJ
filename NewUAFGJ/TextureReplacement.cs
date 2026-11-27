@@ -13,9 +13,10 @@ internal sealed class TextureReplacement
     private readonly int format;
     private readonly int mipCount;
     private readonly (int Width, int Height) replacementSize;
+    private readonly bool allowDownscale;
 
     public TextureReplacement(AssetsFile file, AssetFileInfo asset, ReplacementTypeTree resolver,
-        string? typeTreeSource, (int Width, int Height)? atlasSize)
+        string? typeTreeSource, (int Width, int Height)? atlasSize, bool allowDownscale)
     {
         var template = new AssetTypeTemplateField();
         template.FromTypeTree(resolver.Resolve(file, asset, typeTreeSource));
@@ -25,6 +26,7 @@ internal sealed class TextureReplacement
         format = field["m_TextureFormat"].AsInt;
         mipCount = field["m_MipCount"].AsInt;
         replacementSize = atlasSize ?? (width, height);
+        this.allowDownscale = allowDownscale;
 
         if (atlasSize is not null && format != TextureImage.Alpha8)
             throw new InvalidDataException("--resize-atlas requires an Alpha8 texture.");
@@ -66,17 +68,42 @@ internal sealed class TextureReplacement
     public byte[] Encode(string path, byte[] png, TextureEncodingCache? cache)
     {
         int originalSize = Stream?.Size ?? imageData.AsByteArray.Length;
-        if (PerformanceProfile.Current is { } profile)
-        {
-            var (pngWidth, pngHeight) = TextureImage.ReadPngDimensions(png);
-            profile.Describe($"PNG {png.Length:N0} bytes, {pngWidth}x{pngHeight}. Original texture {TextureImage.DescribeFormat(format)}, {width}x{height}, {mipCount} mip(s), {originalSize:N0} encoded bytes.");
-        }
+        var pngSize = TextureImage.ReadPngDimensions(png);
+        PerformanceProfile.Current?.Describe($"PNG {png.Length:N0} bytes, {pngSize.Width}x{pngSize.Height}. Original texture {TextureImage.DescribeFormat(format)}, {width}x{height}, {mipCount} mip(s), {originalSize:N0} encoded bytes.");
         if (TextureImage.GetEncodedSize(width, height, format, mipCount) != originalSize)
             throw new InvalidDataException("Encoded image size differs from the original texture data.");
 
-        return cache is null
-            ? TextureImage.Encode(png, replacementSize.Width, replacementSize.Height, format, mipCount)
-            : cache.Encode(path, png, replacementSize.Width, replacementSize.Height, format, mipCount);
+        var resampling = SelectResampling(pngSize);
+        var encoding = new TextureEncoding(replacementSize.Width, replacementSize.Height, format, mipCount, resampling);
+        byte[] encoded = cache is null
+            ? TextureImage.Encode(png, pngSize, encoding)
+            : cache.Encode(path, png, pngSize, encoding);
+        if (resampling != PngResampling.None)
+            Console.WriteLine($"Downscaled PNG '{Path.GetFileName(path)}' from {pngSize.Width}x{pngSize.Height} to {width}x{height}.");
+        return encoded;
+    }
+
+    private PngResampling SelectResampling((int Width, int Height) pngSize)
+    {
+        if (pngSize == replacementSize)
+            return PngResampling.None;
+
+        string mismatch = $"The PNG is {pngSize.Width}x{pngSize.Height}. Expected {replacementSize.Width}x{replacementSize.Height}.";
+        if (!allowDownscale)
+            throw new InvalidDataException(mismatch);
+        if (format == TextureImage.Alpha8)
+            throw new InvalidDataException($"{mismatch} --downscale is unavailable for Alpha8 textures.");
+        if (pngSize.Width < width || pngSize.Height < height)
+            throw new InvalidDataException($"{mismatch} --downscale cannot enlarge either dimension.");
+
+        // Test whether one uniform scale could produce both target dimensions within half a pixel.
+        long aspectDifference = Math.Abs((long)pngSize.Width * height - (long)pngSize.Height * width);
+        if (2 * aspectDifference > (long)pngSize.Width + pngSize.Height)
+            throw new InvalidDataException($"{mismatch} --downscale requires compatible aspect ratios.");
+
+        // Unity uses the serialized value 1 for textures sampled as sRGB in linear rendering.
+        var colorSpace = field["m_ColorSpace"];
+        return !colorSpace.IsDummy && colorSpace.AsInt == 1 ? PngResampling.Srgb : PngResampling.Linear;
     }
 
     public byte[] ReplaceInline(string path, byte[] png, bool bigEndian, TextureEncodingCache? cache)

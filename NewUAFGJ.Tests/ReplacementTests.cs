@@ -1274,9 +1274,11 @@ public sealed partial class ReplacementTests : IDisposable
                [0]
                 0 TMP_Glyph data
                  0 int id = 65
+                 0 float xAdvance = 3.25
                [1]
                 0 TMP_Glyph data
                  0 int id = 66
+                 0 float xAdvance = 3
              0 KerningTable m_kerningInfo
               0 KerningPair kerningPairs
                0 Array Array (0 items)
@@ -1293,7 +1295,9 @@ public sealed partial class ReplacementTests : IDisposable
         Assert.Equal(44L, reader.ReadInt64());
         Assert.Equal(2, reader.ReadInt32());
         Assert.Equal(65, reader.ReadInt32());
+        Assert.Equal(3.25f, reader.ReadSingle());
         Assert.Equal(66, reader.ReadInt32());
+        Assert.Equal(3f, reader.ReadSingle());
         Assert.Equal(0, reader.ReadInt32());
         Assert.Equal(reader.BaseStream.Length, reader.Position);
         AssertNoStagingFile(source);

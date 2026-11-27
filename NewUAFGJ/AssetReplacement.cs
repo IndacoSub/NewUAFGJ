@@ -156,6 +156,8 @@ internal static class AssetReplacement
                 throw new ArgumentException("--typetree-source requires a structured dump, PNG, or MP4.");
             if (operation.ResizeAtlas && classId != AssetClassID.Texture2D)
                 throw new ArgumentException("--resize-atlas requires a PNG.");
+            if (operation.Downscale && classId != AssetClassID.Texture2D)
+                throw new ArgumentException("--downscale requires a PNG.");
 
             var replacement = new PreparedReplacement(classId, payload, isVideo ? input : null,
                 operation.ResizeAtlas ? TextureImage.ReadPngDimensions(payload) : null);
@@ -522,7 +524,8 @@ internal static class AssetReplacement
         }
         else if (classId == AssetClassID.Texture2D)
         {
-            var texture = new TextureReplacement(file, asset, session.TypeTrees, operation.TypeTreeSource, replacement.AtlasSize);
+            var texture = new TextureReplacement(file, asset, session.TypeTrees, operation.TypeTreeSource,
+                replacement.AtlasSize, operation.Downscale);
             if (operation.SyncAtlasMaterials && replacement.AtlasSize is { } size)
             {
                 foreach (var (id, material) in AtlasMaterialSync.Apply(file, asset.PathId, size, session.TypeTrees, operation.TypeTreeSource))

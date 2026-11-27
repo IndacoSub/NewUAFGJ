@@ -4,7 +4,7 @@ using NewUAFGJ;
 
 long started = Stopwatch.GetTimestamp();
 const string Usage = """
-    Usage: NewUAFGJ [--profile] [--typetree-root <game-data>] [--raw | [--typetree-source <schema-file>] [--resize-atlas [--sync-atlas-materials]]] <source> <replacement> [pathId] [fileId]
+    Usage: NewUAFGJ [--profile] [--typetree-root <game-data>] [--raw | [--typetree-source <schema-file>] [--downscale | --resize-atlas [--sync-atlas-materials]]] <source> <replacement> [pathId] [fileId]
            NewUAFGJ [--profile] batch <plan.json>
            NewUAFGJ [--profile] repack <bundle> <compression-reference>
     """;
@@ -27,11 +27,12 @@ try
         return BatchCommand.Repack(profiledBundle, profiledReference, printProfile: true, started);
 
     bool rawReplacement = false;
+    bool downscale = false;
     bool resizeAtlas = false;
     bool syncAtlasMaterials = false;
     string? typeTreeSource = null;
     var roots = new List<string>();
-    while (args is ["--profile" or "--raw" or "--resize-atlas" or "--sync-atlas-materials" or "--typetree-source" or "--typetree-root", ..])
+    while (args is ["--profile" or "--raw" or "--downscale" or "--resize-atlas" or "--sync-atlas-materials" or "--typetree-source" or "--typetree-root", ..])
     {
         switch (args)
         {
@@ -41,6 +42,10 @@ try
                 break;
             case ["--raw", ..] when !rawReplacement:
                 rawReplacement = true;
+                args = args[1..];
+                break;
+            case ["--downscale", ..] when !downscale:
+                downscale = true;
                 args = args[1..];
                 break;
             case ["--resize-atlas", ..] when !resizeAtlas:
@@ -85,7 +90,7 @@ try
         roots.Add(ReplacementTypeTree.GameRoot(args[0]));
     var resolver = new ReplacementTypeTree(roots, typeTreeSource is null ? null : [typeTreeSource]);
     var operation = new ReplacementOperation(args[1], pathId, args.Length >= 4 ? args[3] : null,
-        typeTreeSource, rawReplacement, resizeAtlas, syncAtlasMaterials);
+        typeTreeSource, rawReplacement, resizeAtlas, syncAtlasMaterials, Downscale: downscale);
     PerformanceProfile.Current?.Record(PerformanceProfile.Initialization, started);
     var replacedClass = AssetReplacement.Replace(args[0], operation, resolver);
     Console.WriteLine($"{replacedClass} replaced.");

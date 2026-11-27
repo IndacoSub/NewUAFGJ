@@ -7,6 +7,7 @@ internal sealed class PerformanceProfile(long started)
     internal const string Initialization = "Process initialization";
     internal const string PayloadLoading = "Replacement payload loading";
     internal const string PngDecoding = "PNG decoding";
+    internal const string PngDownscaling = "PNG downscaling";
     internal const string TextureEncoding = "Texture encoding (including mipmaps)";
     internal const string TypeTreeResolution = "TypeTree resolution";
     internal const string BundleLoading = "Bundle loading";
@@ -21,7 +22,7 @@ internal sealed class PerformanceProfile(long started)
 
     private static readonly string[] Stages =
     [
-        Initialization, PayloadLoading, PngDecoding, TextureEncoding, TypeTreeResolution,
+        Initialization, PayloadLoading, PngDecoding, PngDownscaling, TextureEncoding, TypeTreeResolution,
         BundleLoading, BundleDecompression, PathIdSearch, AssetSerialization, BundleWriting,
         BundleCompression, Validation, Applying, Cooldown
     ];
