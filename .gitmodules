@@ -1,0 +1,3 @@
+[submodule "deps/AssetsTools.NET"]
+	path = deps/AssetsTools.NET
+	url = https://github.com/nesrak1/AssetsTools.NET

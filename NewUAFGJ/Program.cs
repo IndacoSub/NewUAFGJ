@@ -1,278 +1,107 @@
-using System;
 using System.Diagnostics;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Threading;
-using AssetsTools.NET;
-using AssetsTools.NET.Extra;
+using System.Globalization;
+using NewUAFGJ;
 
-namespace UAFGJ
+long started = Stopwatch.GetTimestamp();
+const string Usage = """
+    Usage: NewUAFGJ [--profile] [--typetree-root <game-data>] [--raw | [--typetree-source <schema-file>] [--downscale | --resize-atlas [--sync-atlas-materials]]] <source> <replacement> [pathId] [fileId]
+           NewUAFGJ [--profile] batch <plan.json>
+           NewUAFGJ [--profile] repack <bundle> <compression-reference>
+    """;
+
+if (args is ["--help"] or ["-h"])
 {
-	partial class Program
-	{
-		// ============================================================
-		// WinAPI
-		// ============================================================
+    Console.WriteLine(Usage);
+    return 0;
+}
 
-		[DllImport("user32.dll")]
-		static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx,
-										int cy, uint uFlags);
+try
+{
+    if (args is ["batch", var plan])
+        return BatchCommand.Run(plan, printProfile: false, started);
+    if (args is ["--profile", "batch", var profiledPlan])
+        return BatchCommand.Run(profiledPlan, printProfile: true, started);
+    if (args is ["repack", var bundle, var reference])
+        return BatchCommand.Repack(bundle, reference, printProfile: false, started);
+    if (args is ["--profile", "repack", var profiledBundle, var profiledReference])
+        return BatchCommand.Repack(profiledBundle, profiledReference, printProfile: true, started);
 
-		[DllImport("user32.dll", SetLastError = true)]
-		static extern bool IsWindow(IntPtr hWnd);
+    bool rawReplacement = false;
+    bool downscale = false;
+    bool resizeAtlas = false;
+    bool syncAtlasMaterials = false;
+    string? typeTreeSource = null;
+    var roots = new List<string>();
+    while (args is ["--profile" or "--raw" or "--downscale" or "--resize-atlas" or "--sync-atlas-materials" or "--typetree-source" or "--typetree-root", ..])
+    {
+        switch (args)
+        {
+            case ["--profile", ..] when PerformanceProfile.Current is null:
+                PerformanceProfile.Current = new PerformanceProfile(started);
+                args = args[1..];
+                break;
+            case ["--raw", ..] when !rawReplacement:
+                rawReplacement = true;
+                args = args[1..];
+                break;
+            case ["--downscale", ..] when !downscale:
+                downscale = true;
+                args = args[1..];
+                break;
+            case ["--resize-atlas", ..] when !resizeAtlas:
+                resizeAtlas = true;
+                args = args[1..];
+                break;
+            case ["--sync-atlas-materials", ..] when !syncAtlasMaterials:
+                syncAtlasMaterials = true;
+                args = args[1..];
+                break;
+            case ["--typetree-source", var templatePath, ..] when typeTreeSource is null:
+                typeTreeSource = templatePath;
+                args = args[2..];
+                break;
+            case ["--typetree-root", var root, ..]:
+                roots.Add(root);
+                args = args[2..];
+                break;
+            default:
+                throw new ArgumentException(Usage);
+        }
+    }
 
-		[DllImport("user32.dll", SetLastError = true)]
-		static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    if (args.Length is < 2 or > 5 || (rawReplacement && (resizeAtlas || typeTreeSource is not null)))
+        throw new ArgumentException(Usage);
+    if (syncAtlasMaterials && !resizeAtlas)
+        throw new ArgumentException("--sync-atlas-materials requires --resize-atlas.");
 
-		const uint SWP_NOZORDER = 0x0004;
-		const uint SWP_SHOWWINDOW = 0x0040;
+    long? pathId = null;
+    if (args.Length >= 3 && args[2] != "-")
+    {
+        if (!long.TryParse(args[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedPathId))
+            throw new ArgumentException("PathID must be a signed 64-bit integer or '-'.");
+        pathId = parsedPathId;
+    }
 
-		[DllImport("user32.dll")]
-		static extern int GetSystemMetrics(int nIndex);
+    if (args.Length >= 4 && args[3] is not ("-" or "0"))
+        throw new ArgumentException("FileID must be '-' or '0'. External file references are unsupported.");
 
-		const int SM_CXSCREEN = 0;
-		const int SM_CYSCREEN = 1;
-
-		// ============================================================
-		// VLC helpers
-		// ============================================================
-
-		static IntPtr FindVlcWindowByTitle(string videoPath)
-		{
-			string fileName = Path.GetFileName(videoPath);
-			string expectedTitle = fileName + " - VLC Media Player";
-			return FindWindow(null, expectedTitle);
-		}
-
-		static void WaitForWindowToClose(IntPtr hwnd)
-		{
-			while (true)
-			{
-				if (!IsWindow(hwnd))
-					break;
-
-				Thread.Sleep(100);
-			}
-		}
-
-		// ============================================================
-		// MAIN
-		// ============================================================
-
-		static void Main(string[] args)
-		{
-			try
-			{
-				Console.OutputEncoding = System.Text.Encoding.UTF8;
-			}
-			catch
-			{
-			}
-
-			AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
-			AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
-
-			Environment.ExitCode = 0;
-
-			try
-			{
-				DebugStr("[BOOT] ==================================================");
-				DebugStr("[BOOT] UAFGJ starting.");
-				DebugStr(
-					$"[BOOT] PID={Environment.ProcessId}, OS={Environment.OSVersion}, 64bit={Environment.Is64BitProcess}");
-				DebugStr($"[BOOT] BaseDirectory='{AppContext.BaseDirectory}'");
-				DebugStr($"[BOOT] CurrentDirectory='{Environment.CurrentDirectory}'");
-				DebugStr($"[BOOT] Args count={(args == null ? -1 : args.Length)}");
-
-				if (args == null)
-				{
-					DisplayStr("[FATAL] Null args!");
-					Environment.ExitCode = 1;
-					return;
-				}
-
-				if (args.Length < 2)
-				{
-					DisplayStr("[FATAL] Usage: UAFGJ.exe <bundle/assets> <input.txt/png> [pathId] [fileId] " +
-							   "[fileKind]");
-					Environment.ExitCode = 1;
-					return;
-				}
-
-				string assetOrBundle = args[0].Replace('\\', '/');
-				string inputFile = args[1].Replace('\\', '/');
-				string pathId = args.Length >= 3 ? args[2].Trim() : string.Empty;
-				string fileId = args.Length >= 4 ? args[3].Trim() : string.Empty;
-				string fileKind = args.Length >= 5 ? args[4].Trim() : string.Empty;
-
-				if (fileId == "-")
-				{
-					fileId = string.Empty;
-				}
-
-				DebugStr($"[BOOT] Input path='{assetOrBundle}'");
-				DebugStr($"[BOOT] Replacement path='{inputFile}'");
-				DebugStr($"[BOOT] PathID='{pathId}'");
-				DebugStr($"[BOOT] FileID='{fileId}'");
-				DebugStr($"[BOOT] FileKind='{fileKind}'");
-
-				if (!File.Exists(assetOrBundle))
-				{
-					DisplayStr("[FATAL] Input bundle/assets file not found: " + assetOrBundle);
-					Environment.ExitCode = 1;
-					return;
-				}
-
-				if (!File.Exists(inputFile))
-				{
-					DisplayStr("[FATAL] Input replacement file not found: " + inputFile);
-					Environment.ExitCode = 1;
-					return;
-				}
-
-				LogFileState("[BOOT] INPUT", assetOrBundle);
-				LogFileState("[BOOT] REPLACEMENT", inputFile);
-
-				DisplayStr("File exists: " + assetOrBundle);
-				DisplayStr("Replacement exists: " + inputFile);
-
-				if (!string.IsNullOrWhiteSpace(pathId))
-				{
-					DisplayStr("Requested path ID: " + pathId);
-				}
-
-				if (!string.IsNullOrWhiteSpace(fileId))
-				{
-					DisplayStr("Requested file ID: " + fileId);
-				}
-
-				if (!string.IsNullOrWhiteSpace(fileKind))
-				{
-					DisplayStr("File kind: " + fileKind);
-				}
-
-				DebugStr("[BOOT] Entering DoStuff().");
-				DoStuff(assetOrBundle, inputFile, pathId, fileId, fileKind);
-				DebugStr($"[BOOT] DoStuff() returned. ExitCode={Environment.ExitCode}");
-
-				if (Environment.ExitCode == 0)
-				{
-					DebugStr("[BOOT] Operation successful. Playing cheer.");
-					DebugStr("[BOOT] PlayCheer() returned.");
-				}
-			}
-			catch (Exception ex)
-			{
-				DisplayStr("[FATAL] " + ex.GetType().Name + ": " + ex.Message);
-				DebugStr(ex.ToString());
-
-				Environment.ExitCode = 1;
-			}
-			finally
-			{
-				DebugStr($"[BOOT] Main workflow finished. ExitCode={Environment.ExitCode}");
-				DebugStr("[BOOT] ==================================================");
-			}
-		}
-
-		// ============================================================
-		// UNHANDLED EXCEPTION
-		// ============================================================
-
-		private static void CurrentDomain_UnhandledException(object sender,
-															 UnhandledExceptionEventArgs e)
-		{
-			try
-			{
-				if (e.ExceptionObject is Exception ex)
-				{
-					DisplayStr("[UNHANDLED] Unhandled exception detected.");
-					DebugStr($"[UNHANDLED] Type={ex.GetType().FullName}");
-					DebugStr($"[UNHANDLED] Message={ex.Message}");
-					DebugStr(ex.ToString());
-
-					Environment.ExitCode = 1;
-				}
-				else
-				{
-					DisplayStr("[UNHANDLED] Unhandled non-Exception object detected: " +
-							   (e.ExceptionObject?.GetType().FullName ?? "<null>"));
-
-					DebugStr($"[UNHANDLED] Object={e.ExceptionObject}");
-				}
-
-				DebugStr($"[UNHANDLED] IsTerminating={e.IsTerminating}");
-			}
-			catch
-			{
-			}
-		}
-
-		// ============================================================
-		// PROCESS EXIT
-		// ============================================================
-
-		private static void CurrentDomain_ProcessExit(object sender, EventArgs e)
-		{
-			try
-			{
-				DebugStr($"[BOOT] ProcessExit event. ExitCode={Environment.ExitCode}");
-			}
-			catch
-			{
-			}
-		}
-
-		// ============================================================
-		// DOSTUFF
-		// ============================================================
-
-		static private void DoStuff(string assetOrBundle, string inputFile, string specificPathId,
-									string specificFileId, string fileKind)
-		{
-			DebugStr("[PHASE] DoStuff: starting file detection.");
-			DebugStr("Opening file: " + assetOrBundle);
-
-			DetectedFileType fileType;
-
-			try
-			{
-				fileType = FileTypeDetector.DetectFileType(assetOrBundle);
-			}
-			catch (Exception ex)
-			{
-				DisplayStr("[FATAL] File type detection failed: " + ex.GetType().Name + ": " + ex.Message);
-
-				DebugStr(ex.ToString());
-
-				Environment.ExitCode = 1;
-				return;
-			}
-
-			DebugStr("Detected file type: " + fileType);
-
-			switch (fileType)
-			{
-				case DetectedFileType.BundleFile:
-					DebugStr("[PHASE] Dispatching to HandleBundle().");
-
-					HandleBundle(assetOrBundle, inputFile, specificPathId, specificFileId, fileKind);
-
-					break;
-
-				case DetectedFileType.AssetsFile:
-					DebugStr("[PHASE] Dispatching to HandleAsset().");
-
-					HandleAsset(assetOrBundle, inputFile, specificPathId, specificFileId, fileKind);
-
-					break;
-
-				default:
-					DisplayStr("Invalid file type for " + assetOrBundle + ": " + fileType);
-
-					Environment.ExitCode = 1;
-					break;
-			}
-		}
-	}
+    // A fifth positional argument is accepted for legacy callers. The serialized class controls the operation.
+    if (roots.Count == 0)
+        roots.Add(ReplacementTypeTree.GameRoot(args[0]));
+    var resolver = new ReplacementTypeTree(roots, typeTreeSource is null ? null : [typeTreeSource]);
+    var operation = new ReplacementOperation(args[1], pathId, args.Length >= 4 ? args[3] : null,
+        typeTreeSource, rawReplacement, resizeAtlas, syncAtlasMaterials, Downscale: downscale);
+    PerformanceProfile.Current?.Record(PerformanceProfile.Initialization, started);
+    var replacedClass = AssetReplacement.Replace(args[0], operation, resolver);
+    Console.WriteLine($"{replacedClass} replaced.");
+    return 0;
+}
+catch (Exception error)
+{
+    Console.Error.WriteLine($"[FATAL] {error.Message}");
+    return 1;
+}
+finally
+{
+    PerformanceProfile.Current?.Print();
 }
